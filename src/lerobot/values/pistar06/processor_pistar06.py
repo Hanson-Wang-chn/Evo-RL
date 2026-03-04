@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 from torch import Tensor
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
@@ -39,7 +39,7 @@ PISTAR06_IMAGE_MASK_KEY = "observation.pistar06.image_attention_mask"
 def _pad_last_dim(vector: Tensor, new_dim: int) -> Tensor:
     if vector.shape[-1] >= new_dim:
         return vector
-    return F.pad(vector, (0, new_dim - vector.shape[-1]))
+    return functional.pad(vector, (0, new_dim - vector.shape[-1]))
 
 
 @ProcessorStepRegistry.register(name="pistar06_prepare_task_prompt")
@@ -216,7 +216,7 @@ def make_pistar06_pre_post_processors(
 ]:
     camera_features = list(config.camera_features)
     if not camera_features:
-        camera_features = [k for k in (config.input_features or {}).keys() if k.startswith(OBS_IMAGES)]
+        camera_features = [k for k in (config.input_features or {}) if k.startswith(OBS_IMAGES)]
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),

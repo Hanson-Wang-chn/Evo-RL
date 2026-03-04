@@ -1,7 +1,7 @@
 <h1 align="center">Evo-RL</h1>
 
 <p align="center">
-  <a href="https://elvin-yk.github.io/Evo-RL/"><img alt="project website" src="https://img.shields.io/badge/Project-Website-0ea5e9"/></a>
+  <a href="https://MINT-SJTU.github.io/Evo-RL/"><img alt="project website" src="https://img.shields.io/badge/Project-Website-0ea5e9"/></a>
   <a href="https://github.com/huggingface/lerobot"><img alt="lerobot version" src="https://img.shields.io/badge/LeRobot-0.4.4-f59e0b"/></a>
   <a href="https://evorl.example.com/wechat-post"><img alt="wechat post" src="https://img.shields.io/badge/WeChat-Official%20Post-07c160"/></a>
   <a href="#community-channels"><img alt="wechat group join us" src="https://img.shields.io/badge/WeChat%20Group-Join%20Us-a855f7?logo=wechat&logoColor=white"/></a>
@@ -84,6 +84,7 @@ For SO101 setup, please follow the [official SO101 tutorial](https://wiki.seeeds
 #### Device path recommendation
 
 Recommended path strategy:
+
 - **Robot serial:** use `/dev/serial/by-id/` (stable across reboots).
 - **Cameras:** prefer `/dev/v4l/by-id/`; if IDs are not unique, use `/dev/v4l/by-path/`.
 - In examples below: robot ports use `by-id`, camera paths use `by-path`.
@@ -213,6 +214,7 @@ lerobot-human-inloop-record \
 Recommendation: use **`fourcc: "MJPG"`** for OpenCV and **`warmup_s`** for RealSense. In this example `front` uses RealSense, but you can switch it to OpenCV with the same structure.
 
 Hotkeys:
+
 - `i`: toggle intervention mode (policy <-> teleop takeover)
 - `s`: mark success and end current episode
 - `f`: mark failure and end current episode
@@ -230,7 +232,7 @@ This prints: dataset meta, totals, episode-length stats/histogram, success/inter
 
 ### 4) Value Function Training
 
-Train the value function on the current dataset. Current default: [Pi*0.6](https://www.pi.website/blog/pistar06) (`--value.type=pistar06`).
+Train the value function on the current dataset. Current default: [Pi\*0.6](https://www.pi.website/blog/pistar06) (`--value.type=pistar06`).
 
 Single-GPU template:
 
@@ -260,6 +262,7 @@ CUDA_VISIBLE_DEVICES=<GPU_ID_LIST> accelerate launch \
 ```
 
 To plug in a different value function, minimal path in this repo:
+
 - Add `src/lerobot/values/<your_value>/configuration_<your_value>.py` with `@PreTrainedConfig.register_subclass("<your_value>")`.
 - Add `src/lerobot/values/<your_value>/modeling_<your_value>.py` with `<YourValue>Policy(PreTrainedPolicy)` (implement at least `forward`, `predict_value`, and `build_training_raw_batch_hook` for `lerobot-value-train`).
 - Add `src/lerobot/values/<your_value>/processor_<your_value>.py` with `make_<your_value>_pre_post_processors(...)`.
@@ -268,6 +271,7 @@ To plug in a different value function, minimal path in this repo:
 ### 5) Value Inference
 
 Infer value signals and write value/advantage/indicator back to the dataset:
+
 - `value`: estimated return-to-go of the current frame.
 - `advantage`: relative improvement signal (higher means better-than-baseline trajectory quality).
 - `indicator`: binarized training tag derived from advantage.
@@ -302,10 +306,12 @@ CUDA_VISIBLE_DEVICES=<GPU_ID_LIST> accelerate launch \
 ```
 
 Parameter notes:
+
 - `--acp.n_step`: n-step advantage horizon.
 - `--acp.positive_ratio`: positive label ratio after advantage binarization (e.g., `0.3` = top 30% per task).
 
 Expected new columns:
+
 - `complementary_info.value_<TAG>`
 - `complementary_info.advantage_<TAG>`
 - `complementary_info.acp_indicator_<TAG>`
@@ -313,6 +319,7 @@ Expected new columns:
 These columns are written back to the original dataset specified by `--dataset.repo_id`.
 
 Visualization (optional):
+
 - Enable with `--viz.enable=true`.
 - Output videos are saved to `outputs/value_infer/<RUN_NAME>/value/viz/`.
 - Each video overlays a value curve and per-frame text (`advantage`, `acp_indicator`) on top of camera frames.
@@ -323,6 +330,7 @@ Visualization (optional):
   - `--viz.vcodec=<CODEC>` and `--viz.frame_storage_mode=memory|disk`
 
 Value overlay examples (SO101, smooth=11):
+
 - GIF assets are stored under `website/assets/gifs/`.
 
 ### 6) Policy Training
@@ -354,6 +362,7 @@ lerobot-train \
 `--acp.indicator_dropout_prob` controls tag drop rate in task text; `0.3` helps learn both tagged and untagged conditions.
 
 Important checks:
+
 - `--acp.indicator_field` must exist in the dataset and be **binary (`0/1`)**.
 
 Multi-GPU template:
@@ -396,6 +405,7 @@ lerobot-human-inloop-record \
 ```
 
 Dataset continuation options:
+
 - **Append in place:** keep `--resume=true` and continue recording into the same dataset.
 - **Merge multiple rounds:** use the official dataset editor to merge separate datasets.
 
@@ -407,6 +417,7 @@ lerobot-edit-dataset \
 ```
 
 Additional data attributes vs default `lerobot-record` behavior:
+
 - `complementary_info.policy_action`: policy output action at each step.
 - `complementary_info.is_intervention`: whether current step is in intervention.
 - `complementary_info.state`: intervention state-machine state.

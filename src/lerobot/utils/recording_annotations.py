@@ -103,4 +103,3 @@ def resolve_collector_policy_id(
     if intervention_enabled:
         return human_id if is_intervention else policy_id
     return policy_id if selected_from_policy else human_id
-

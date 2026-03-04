@@ -14,7 +14,6 @@
 
 """Human-in-loop recording helpers used by `lerobot_record.py`."""
 
-import logging
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -53,7 +52,9 @@ def _get_torch_rng_state(device: torch.device) -> tuple[torch.Tensor, torch.Tens
     return cpu_state, cuda_state
 
 
-def _set_torch_rng_state(device: torch.device, cpu_state: torch.Tensor, cuda_state: torch.Tensor | None) -> None:
+def _set_torch_rng_state(
+    device: torch.device, cpu_state: torch.Tensor, cuda_state: torch.Tensor | None
+) -> None:
     torch.set_rng_state(cpu_state)
     if device.type == "cuda" and cuda_state is not None:
         torch.cuda.set_rng_state(cuda_state, device)

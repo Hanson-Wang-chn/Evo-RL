@@ -97,6 +97,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.scripts.recording_hil import (
+    ACPInferenceConfig,
+    PolicySyncDualArmExecutor,
+    _capture_policy_runtime_state,  # noqa: F401
+    _predict_policy_action_with_acp_inference,  # noqa: F401
+)
+from lerobot.scripts.recording_loop import record_loop
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     bi_openarm_leader,
@@ -110,13 +117,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.scripts.recording_hil import (
-    ACPInferenceConfig,
-    PolicySyncDualArmExecutor,
-    _capture_policy_runtime_state,  # noqa: F401
-    _predict_policy_action_with_acp_inference,  # noqa: F401
-)
-from lerobot.scripts.recording_loop import record_loop
 from lerobot.utils.constants import ACTION
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -288,6 +288,7 @@ class RecordConfig:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
 
+
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
@@ -325,10 +326,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     )
     if cfg.intervention_state_machine_enabled and cfg.policy is not None and cfg.teleop is not None:
         action_names = dataset_features[ACTION]["names"]
-        if action_names is None:
-            action_names = list(robot.action_features)
-        else:
-            action_names = list(action_names)
+        action_names = list(robot.action_features) if action_names is None else list(action_names)
         dataset_features["complementary_info.policy_action"] = {
             "dtype": "float32",
             "shape": (len(action_names),),
@@ -524,9 +522,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     continue
 
                 extra_episode_metadata = (
-                    {"episode_success": episode_success}
-                    if cfg.enable_episode_outcome_labeling
-                    else None
+                    {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
                 )
                 dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
                 recorded_episodes += 1

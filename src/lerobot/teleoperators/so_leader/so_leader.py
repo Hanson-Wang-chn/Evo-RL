@@ -165,9 +165,7 @@ class SOLeader(Teleoperator):
         # For phase-A dual-arm execution, reuse leader as a commanded arm by
         # mapping `{joint}.pos` to motor goal positions.
         self.set_manual_control(False)
-        goal_pos = {
-            key.removesuffix(".pos"): val for key, val in feedback.items() if key.endswith(".pos")
-        }
+        goal_pos = {key.removesuffix(".pos"): val for key, val in feedback.items() if key.endswith(".pos")}
         if not goal_pos:
             return
         self.bus.sync_write("Goal_Position", goal_pos)

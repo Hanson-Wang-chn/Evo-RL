@@ -35,10 +35,10 @@ from lerobot.processor import (
 )
 from lerobot.robots import Robot
 from lerobot.scripts.recording_hil import (
-    ACPInferenceConfig,
     INTERVENTION_STATE_ACTIVE,
     INTERVENTION_STATE_POLICY,
     INTERVENTION_STATE_RELEASE,
+    ACPInferenceConfig,
     PolicySyncDualArmExecutor,
     _capture_policy_runtime_state,
     _predict_policy_action_with_acp_inference,
@@ -155,8 +155,8 @@ def record_loop(
             action_feature_names = list(robot.action_features.keys())
         else:
             action_feature_names = list(robot.action_features)
-    zero_policy_action = {name: 0.0 for name in action_feature_names}
-    has_teleop = isinstance(teleop, Teleoperator) or isinstance(teleop, list)
+    zero_policy_action = dict.fromkeys(action_feature_names, 0.0)
+    has_teleop = isinstance(teleop, (Teleoperator, list))
     intervention_enabled = intervention_state_machine_enabled and policy is not None and has_teleop
     intervention_state = INTERVENTION_STATE_POLICY
     last_teleop_action: RobotAction | None = None
@@ -282,22 +282,26 @@ def record_loop(
         # Get action from policy and/or teleop
         act_processed_policy: RobotAction | None = None
         act_processed_teleop: RobotAction | None = None
-        if policy is not None and preprocessor is not None and postprocessor is not None:
-            if not (intervention_enabled and intervention_state == INTERVENTION_STATE_ACTIVE):
-                policy_action = _predict_policy_action_with_acp_inference(
-                    observation_frame=observation_frame,
-                    policy=policy,
-                    device=get_safe_torch_device(policy.config.device),
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
-                    use_amp=policy.config.use_amp,
-                    task=single_task,
-                    robot_type=robot.robot_type,
-                    acp_inference=acp_inference,
-                    cond_runtime_state=cond_policy_runtime_state,
-                    uncond_runtime_state=uncond_policy_runtime_state,
-                )
-                act_processed_policy = make_robot_action(policy_action, dataset.features)
+        if (
+            policy is not None
+            and preprocessor is not None
+            and postprocessor is not None
+            and not (intervention_enabled and intervention_state == INTERVENTION_STATE_ACTIVE)
+        ):
+            policy_action = _predict_policy_action_with_acp_inference(
+                observation_frame=observation_frame,
+                policy=policy,
+                device=get_safe_torch_device(policy.config.device),
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                use_amp=policy.config.use_amp,
+                task=single_task,
+                robot_type=robot.robot_type,
+                acp_inference=acp_inference,
+                cond_runtime_state=cond_policy_runtime_state,
+                uncond_runtime_state=uncond_policy_runtime_state,
+            )
+            act_processed_policy = make_robot_action(policy_action, dataset.features)
 
         if isinstance(teleop, Teleoperator):
             act = run_with_connection_retry("teleop.get_action", teleop.get_action)
@@ -325,7 +329,9 @@ def record_loop(
             last_teleop_action = act_processed_teleop
             teleop_fallback_warned = False
 
-        policy_action_for_storage = act_processed_policy if act_processed_policy is not None else zero_policy_action
+        policy_action_for_storage = (
+            act_processed_policy if act_processed_policy is not None else zero_policy_action
+        )
 
         is_intervention = 0.0
         if intervention_enabled and intervention_state == INTERVENTION_STATE_ACTIVE:
@@ -367,12 +373,14 @@ def record_loop(
         if policy_sync_executor is not None and selected_from_policy:
             _sent_action = run_with_connection_retry(
                 "policy_sync_executor.send_action",
-                lambda: policy_sync_executor.send_action(robot_action_to_send),
+                lambda robot_action_to_send=robot_action_to_send: policy_sync_executor.send_action(
+                    robot_action_to_send
+                ),
             )
         else:
             _sent_action = run_with_connection_retry(
                 "robot.send_action",
-                lambda: robot.send_action(robot_action_to_send),
+                lambda robot_action_to_send=robot_action_to_send: robot.send_action(robot_action_to_send),
             )
 
         # Write to dataset

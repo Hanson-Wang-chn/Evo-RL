@@ -729,15 +729,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Check if cached dataset contains all requested episodes
             if not self._check_cached_episodes_sufficient():
                 raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
-        except (AssertionError, FileNotFoundError, NotADirectoryError):
+        except (AssertionError, FileNotFoundError, NotADirectoryError) as err:
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
             self.download(download_videos)
             self.hf_dataset = self.load_hf_dataset()
             if not self._check_cached_episodes_sufficient():
                 missing_videos_hint = (
-                    " Missing video files are required by this dataset. "
-                    "Retry with `download_videos=True`."
+                    " Missing video files are required by this dataset. Retry with `download_videos=True`."
                     if len(self.meta.video_keys) > 0 and not download_videos
                     else ""
                 )
@@ -745,7 +744,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     "Cached dataset is incomplete after download. "
                     "Some requested episodes or files are missing."
                     f"{missing_videos_hint}"
-                )
+                ) from err
 
         # Create mapping from absolute indices to relative indices when only a subset of the episodes are loaded
         # Build a mapping: absolute_index -> relative_index_in_filtered_dataset

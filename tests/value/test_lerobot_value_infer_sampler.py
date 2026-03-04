@@ -9,7 +9,9 @@ def test_contiguous_distributed_eval_sampler_has_contiguous_shards_with_tail_pad
 
     shards: list[list[int]] = []
     for rank in range(world_size):
-        sampler = ContiguousDistributedEvalSampler(dataset_size=dataset_size, num_replicas=world_size, rank=rank)
+        sampler = ContiguousDistributedEvalSampler(
+            dataset_size=dataset_size, num_replicas=world_size, rank=rank
+        )
         shard = list(iter(sampler))
         shards.append(shard)
         assert len(shard) == len(sampler) == 4
@@ -30,7 +32,9 @@ def test_contiguous_distributed_eval_sampler_handles_more_ranks_than_samples():
 
     shards: list[list[int]] = []
     for rank in range(world_size):
-        sampler = ContiguousDistributedEvalSampler(dataset_size=dataset_size, num_replicas=world_size, rank=rank)
+        sampler = ContiguousDistributedEvalSampler(
+            dataset_size=dataset_size, num_replicas=world_size, rank=rank
+        )
         shard = list(iter(sampler))
         shards.append(shard)
         assert len(shard) == len(sampler) == 1

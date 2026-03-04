@@ -136,7 +136,9 @@ def build_report(dataset_root: Path) -> dict[str, Any]:
     episodes_df = episodes_ds.to_pandas()
 
     actual_episode_count = int(len(episodes_df))
-    episode_success_labels = episodes_df["episode_success"].tolist() if "episode_success" in episodes_df else []
+    episode_success_labels = (
+        episodes_df["episode_success"].tolist() if "episode_success" in episodes_df else []
+    )
     normalized_labels = [_normalize_label(v) for v in episode_success_labels]
 
     success_count = sum(1 for v in normalized_labels if v == "success")
@@ -153,7 +155,11 @@ def build_report(dataset_root: Path) -> dict[str, Any]:
     intervention_frames = 0
     intervention_episode_count = 0
 
-    if intervention_col in data_schema_names and episode_index_col in data_schema_names and actual_frame_count > 0:
+    if (
+        intervention_col in data_schema_names
+        and episode_index_col in data_schema_names
+        and actual_frame_count > 0
+    ):
         table = data_dataset.to_table(columns=[episode_index_col, intervention_col])
         episode_indices = table[episode_index_col].to_pylist()
         intervention_values = table[intervention_col].to_pylist()
@@ -190,10 +196,14 @@ def build_report(dataset_root: Path) -> dict[str, Any]:
 
     fps = float(info.get("fps", 0) or 0)
     episode_lengths_frames = (
-        episodes_df["length"].astype(int).tolist() if "length" in episodes_df and actual_episode_count > 0 else []
+        episodes_df["length"].astype(int).tolist()
+        if "length" in episodes_df and actual_episode_count > 0
+        else []
     )
     episode_lengths_seconds = [frames / fps for frames in episode_lengths_frames] if fps > 0 else []
-    length_mean = float(sum(episode_lengths_seconds) / len(episode_lengths_seconds)) if episode_lengths_seconds else 0.0
+    length_mean = (
+        float(sum(episode_lengths_seconds) / len(episode_lengths_seconds)) if episode_lengths_seconds else 0.0
+    )
     length_min = float(min(episode_lengths_seconds)) if episode_lengths_seconds else 0.0
     length_max = float(max(episode_lengths_seconds)) if episode_lengths_seconds else 0.0
     length_histogram = _build_episode_length_histogram(episode_lengths_seconds, bins=20)

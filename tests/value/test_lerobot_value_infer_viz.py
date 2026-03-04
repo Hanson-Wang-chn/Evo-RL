@@ -13,8 +13,7 @@ from lerobot.configs.value import (
     ValueInferencePipelineConfig,
     ValueInferenceVizConfig,
 )
-from lerobot.scripts import lerobot_value_infer as value_infer
-from lerobot.scripts import value_infer_viz
+from lerobot.scripts import lerobot_value_infer as value_infer, value_infer_viz
 
 
 class _FakeHFDataset:

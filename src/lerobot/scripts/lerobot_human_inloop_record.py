@@ -22,16 +22,16 @@ Phase A/B goals:
 - Keyboard-toggled intervention lets teleop temporarily take over execution.
 """
 
-import logging
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
 
 from lerobot.configs import parser
 from lerobot.scripts.lerobot_record import RecordConfig, record
-from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.recording_annotations import EPISODE_FAILURE, infer_collector_policy_version
 
 
@@ -64,7 +64,9 @@ def _load_failure_reset_pose(pose_path: Path) -> dict[str, float]:
         payload = json.load(f)
     joint_pos_raw = payload["joint_pos"] if isinstance(payload, dict) and "joint_pos" in payload else payload
     if not isinstance(joint_pos_raw, dict):
-        raise ValueError(f"Invalid failure reset pose payload in {pose_path}: expected dict, got {type(joint_pos_raw)}")
+        raise ValueError(
+            f"Invalid failure reset pose payload in {pose_path}: expected dict, got {type(joint_pos_raw)}"
+        )
     joint_pos = {str(key): float(value) for key, value in joint_pos_raw.items() if str(key).endswith(".pos")}
     if not joint_pos:
         raise ValueError(f"Invalid failure reset pose payload in {pose_path}: no '.pos' joints found.")

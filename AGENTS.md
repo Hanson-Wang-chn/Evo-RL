@@ -22,7 +22,7 @@ If using `conda activate /llm_jzm/cache/conda_env/lerobot`:
 - Treat it as shared machine mode.
 - Hugging Face cache is not in the default location.
 - Set Hugging Face token to the shared token for runs on this machine.
-- Set Wandb token to hte shared token for runs on this machine
+- Set Wandb token to the shared token for runs on this machine
 
 Use:
 

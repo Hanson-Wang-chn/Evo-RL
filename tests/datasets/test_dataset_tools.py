@@ -729,7 +729,9 @@ def test_delete_episodes_preserves_extra_episode_metadata(tmp_path, empty_lerobo
         )
 
     assert "episode_success" in new_dataset.meta.episodes.column_names
-    assert [new_dataset.meta.episodes[i]["episode_success"] for i in range(new_dataset.meta.total_episodes)] == [
+    assert [
+        new_dataset.meta.episodes[i]["episode_success"] for i in range(new_dataset.meta.total_episodes)
+    ] == [
         "success",
         "success",
     ]

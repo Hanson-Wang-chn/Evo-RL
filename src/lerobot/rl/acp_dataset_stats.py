@@ -60,10 +60,7 @@ def _from_meta_stats(dataset: Any, indicator_field: str) -> ACPIndicatorStats | 
 
     count_raw = _stats_entry_to_scalar(field_stats, "count")
     total_count = int(round(count_raw)) if count_raw is not None else -1
-    if total_count >= 0:
-        positive_count = int(round(ratio * total_count))
-    else:
-        positive_count = -1
+    positive_count = int(round(ratio * total_count)) if total_count >= 0 else -1
 
     return ACPIndicatorStats(
         indicator_field=indicator_field,

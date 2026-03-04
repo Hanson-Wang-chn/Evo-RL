@@ -10,8 +10,6 @@ from torch import nn
 
 import lerobot.processor.tokenizer_processor as tokenizer_processor
 import lerobot.values.pistar06.modeling_pistar06 as pistar06_modeling
-import lerobot.values.pistar06.processor_pistar06 as pistar06_processor
-from lerobot.configs.value_train import ValueTargetsConfig
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
@@ -95,10 +93,7 @@ class _DummyAutoModel:
     @classmethod
     def from_pretrained(cls, repo_id, **kwargs):
         output_loading_info = bool(kwargs.pop("output_loading_info", False))
-        if "siglip" in repo_id.lower():
-            model = _DummyVisionModel()
-        else:
-            model = _DummyLanguageModel()
+        model = _DummyVisionModel() if "siglip" in repo_id.lower() else _DummyLanguageModel()
         if output_loading_info:
             return model, {"missing_keys": [], "unexpected_keys": [], "mismatched_keys": []}
         return model

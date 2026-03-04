@@ -15,9 +15,8 @@
 # limitations under the License.
 
 import json
-from unittest.mock import MagicMock, patch
-
 from collections import deque
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -25,12 +24,12 @@ import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
-from lerobot.scripts.lerobot_human_inloop_record import human_inloop_record
 from lerobot.scripts.lerobot_human_inloop_record import (
     _HumanInloopFailureResetController,
     _load_failure_reset_pose,
     _save_failure_reset_pose,
     _slow_reset_all_arms_to_pose,
+    human_inloop_record,
 )
 from lerobot.scripts.lerobot_record import (
     ACPInferenceConfig,
@@ -39,8 +38,8 @@ from lerobot.scripts.lerobot_record import (
     RecordConfig,
     _capture_policy_runtime_state,
     _predict_policy_action_with_acp_inference,
-    record_loop,
     record,
+    record_loop,
 )
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
@@ -211,9 +210,7 @@ def test_record_loop_sets_leader_manual_control_during_reset():
 
 
 def test_save_and_load_failure_reset_pose(tmp_path):
-    robot = MockRobot(
-        MockRobotConfig(n_motors=2, random_values=False, static_values=[12.5, -3.0])
-    )
+    robot = MockRobot(MockRobotConfig(n_motors=2, random_values=False, static_values=[12.5, -3.0]))
     robot.connect()
     pose_path = tmp_path / "failure_reset_pose.json"
 

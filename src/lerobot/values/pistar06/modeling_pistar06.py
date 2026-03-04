@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -78,7 +78,7 @@ def project_values_to_bins(values: torch.Tensor, bin_centers: torch.Tensor) -> t
 
 
 def expected_value_from_logits(logits: torch.Tensor, bin_centers: torch.Tensor) -> torch.Tensor:
-    probs = F.softmax(logits, dim=-1)
+    probs = functional.softmax(logits, dim=-1)
     return (probs * bin_centers).sum(dim=-1)
 
 
@@ -198,13 +198,13 @@ def _resolve_image_size(image_processor: Any) -> tuple[int, int]:
     return 384, 384
 
 
-def _resolve_norm_stats(image_processor: Any) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+def _resolve_norm_stats(
+    image_processor: Any,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     mean_raw = getattr(image_processor, "image_mean", [0.5, 0.5, 0.5])
     std_raw = getattr(image_processor, "image_std", [0.5, 0.5, 0.5])
     if len(mean_raw) != 3 or len(std_raw) != 3:
-        raise ValueError(
-            f"Expected RGB normalization stats of len=3, got mean={mean_raw} std={std_raw}."
-        )
+        raise ValueError(f"Expected RGB normalization stats of len=3, got mean={mean_raw} std={std_raw}.")
     mean = (float(mean_raw[0]), float(mean_raw[1]), float(mean_raw[2]))
     std = (float(std_raw[0]), float(std_raw[1]), float(std_raw[2]))
     if any(v <= 0 for v in std):
@@ -367,7 +367,7 @@ class Pistar06Model(nn.Module):
 
         flat_images = images.view(bsize * num_cameras, *images.shape[2:])
         if flat_images.shape[-2:] != self.image_resolution:
-            flat_images = F.interpolate(
+            flat_images = functional.interpolate(
                 flat_images,
                 size=self.image_resolution,
                 mode="bilinear",
@@ -435,7 +435,9 @@ class Pistar06Model(nn.Module):
 
         language_context = torch.no_grad() if self.cfg.freeze_language_model else nullcontext()
         with language_context:
-            language_features = self._encode_language(input_ids=input_ids, attention_mask=language_mask.long())
+            language_features = self._encode_language(
+                input_ids=input_ids, attention_mask=language_mask.long()
+            )
 
         feature_dtype = torch.float32
         image_features = image_features.to(dtype=feature_dtype)
@@ -445,7 +447,9 @@ class Pistar06Model(nn.Module):
         camera_token_mask = image_attention_mask.unsqueeze(-1).to(dtype=image_tokens.dtype)
         image_tokens = image_tokens * camera_token_mask
 
-        camera_denominator = image_attention_mask.sum(dim=1, keepdim=True).to(dtype=image_tokens.dtype).clamp_min(1.0)
+        camera_denominator = (
+            image_attention_mask.sum(dim=1, keepdim=True).to(dtype=image_tokens.dtype).clamp_min(1.0)
+        )
         image_pooled = image_tokens.sum(dim=1) / camera_denominator
         language_token = self.language_projector(language_features)
 
@@ -743,7 +747,7 @@ class Pistar06Policy(PreTrainedPolicy):
 
         bin_centers = self.bin_centers.to(device=device)
         soft_target = project_values_to_bins(value_target, bin_centers)
-        log_probs = F.log_softmax(logits, dim=-1)
+        log_probs = functional.log_softmax(logits, dim=-1)
         per_sample_loss = -(soft_target * log_probs).sum(dim=-1)
 
         sample_weight = None
@@ -769,13 +773,12 @@ class Pistar06Policy(PreTrainedPolicy):
         pred_value = expected_value_from_logits(logits, bin_centers)
         value_mae = (pred_value - value_target).abs().mean()
 
-        if reduction == "none":
-            loss = per_sample_loss
-        else:
-            loss = per_sample_loss.mean()
+        loss = per_sample_loss if reduction == "none" else per_sample_loss.mean()
 
         loss_dict = {
-            "loss": float(loss.mean().detach().item()) if reduction == "none" else float(loss.detach().item()),
+            "loss": float(loss.mean().detach().item())
+            if reduction == "none"
+            else float(loss.detach().item()),
             "value_mae": float(value_mae.detach().item()),
         }
         if sample_weight is not None:

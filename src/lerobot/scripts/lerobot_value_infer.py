@@ -35,6 +35,9 @@ from lerobot.configs.value import ValueInferencePipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.scripts.value_infer_viz import (
+    _export_overlay_videos,
+)
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
@@ -44,11 +47,6 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS, resolve_episode_success_label
 from lerobot.utils.utils import init_logging, inside_slurm
-from lerobot.scripts.value_infer_viz import (
-    _export_overlay_videos,
-    _get_episode_value_bounds,
-    _get_video_encode_options,
-)
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
     EpisodeTargetInfo,
@@ -310,8 +308,8 @@ def _binarize_advantages(
 
     for i in range(advantages.shape[0]):
         task_idx = int(task_indices[i])
-        thr = thresholds[task_idx]
-        indicators[i] = 1 if float(advantages[i]) >= thr else 0
+        threshold = thresholds[task_idx]
+        indicators[i] = 1 if float(advantages[i]) >= threshold else 0
 
     if force_intervention_positive:
         intervention_mask = interventions.astype(np.float32) > 0.5

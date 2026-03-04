@@ -836,7 +836,11 @@ def _copy_and_reindex_episodes_metadata(
         for key in schema.names:
             if key in {"episode_index", "tasks", "length"}:
                 continue
-            if key.startswith("stats/") or key.startswith("__index_level_") or key.startswith("meta/episodes/"):
+            if (
+                key.startswith("stats/")
+                or key.startswith("__index_level_")
+                or key.startswith("meta/episodes/")
+            ):
                 continue
             if key not in seen_preserved_keys:
                 seen_preserved_keys.add(key)

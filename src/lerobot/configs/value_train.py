@@ -41,7 +41,9 @@ class ValueTargetsConfig:
         if self.c_fail_coef < 0:
             raise ValueError("'targets.c_fail_coef' must be non-negative.")
         if not self.target_field.startswith("observation."):
-            raise ValueError("'targets.target_field' must start with 'observation.' to survive processor conversion.")
+            raise ValueError(
+                "'targets.target_field' must start with 'observation.' to survive processor conversion."
+            )
 
 
 @dataclass
@@ -113,7 +115,7 @@ class ValueTrainPipelineConfig(HubMixin):
         self.targets.validate()
 
         if hasattr(self.value, "target_key"):
-            setattr(self.value, "target_key", self.targets.target_field)
+            self.value.target_key = self.targets.target_field
 
         if not self.job_name:
             self.job_name = f"{self.value.type}_value"
@@ -136,7 +138,9 @@ class ValueTrainPipelineConfig(HubMixin):
             self.scheduler = self.value.get_scheduler_preset()
 
         if self.value.push_to_hub and not self.value.repo_id:
-            raise ValueError("'value.repo_id' argument missing. Please specify it to push the model to the hub.")
+            raise ValueError(
+                "'value.repo_id' argument missing. Please specify it to push the model to the hub."
+            )
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
