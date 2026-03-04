@@ -16,7 +16,12 @@
 
 import pytest
 
-pytest.importorskip("transformers")
+transformers = pytest.importorskip("transformers")
+if not hasattr(transformers, "Qwen3VLMoeForConditionalGeneration"):
+    pytest.skip(
+        "requires transformers with Qwen3VLMoeForConditionalGeneration",
+        allow_module_level=True,
+    )
 
 from lerobot.data_processing.sarm_annotations.subtask_annotation import (
     Subtask,

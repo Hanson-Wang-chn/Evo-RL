@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from lerobot.configs.train import ACPConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.acp_hook import build_acp_raw_batch_hook
+from lerobot.rl.acp_tags import ACP_NEGATIVE_TAG, ACP_POSITIVE_TAG
 
 
 def test_acp_hook_accepts_integer_indicators():
@@ -14,8 +15,6 @@ def test_acp_hook_accepts_integer_indicators():
         ACPConfig(
             enable=True,
             indicator_field="acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=0.0,
         ),
         seed=42,
@@ -27,8 +26,8 @@ def test_acp_hook_accepts_integer_indicators():
 
     out = hook(batch, 0)
     assert out["task"] == [
-        "pick bottle\nPOS",
-        "place bottle\nNEG",
+        f"pick bottle\n{ACP_POSITIVE_TAG}",
+        f"place bottle\n{ACP_NEGATIVE_TAG}",
     ]
 
 
@@ -37,8 +36,6 @@ def test_acp_hook_injects_tags():
         ACPConfig(
             enable=True,
             indicator_field="complementary_info.acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=0.0,
         ),
         seed=42,
@@ -49,7 +46,7 @@ def test_acp_hook_injects_tags():
     }
 
     out = hook(batch, 0)
-    assert out["task"] == ["pick bottle\nPOS", "place bottle\nNEG"]
+    assert out["task"] == [f"pick bottle\n{ACP_POSITIVE_TAG}", f"place bottle\n{ACP_NEGATIVE_TAG}"]
 
 
 def test_acp_hook_dropout_keeps_original_task():
@@ -57,8 +54,6 @@ def test_acp_hook_dropout_keeps_original_task():
         ACPConfig(
             enable=True,
             indicator_field="complementary_info.acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=1.0,
         ),
         seed=42,
@@ -87,8 +82,6 @@ def test_acp_hook_non_integer_type_raises():
         ACPConfig(
             enable=True,
             indicator_field="acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=0.0,
         ),
         seed=42,
@@ -106,8 +99,6 @@ def test_acp_hook_non_binary_value_raises():
         ACPConfig(
             enable=True,
             indicator_field="acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=0.0,
         ),
         seed=42,
@@ -143,8 +134,6 @@ def test_acp_hook_with_real_local_dataset_batch(batch_size: int):
         ACPConfig(
             enable=True,
             indicator_field="complementary_info.acp_indicator",
-            positive_tag="POS",
-            negative_tag="NEG",
             indicator_dropout_prob=0.0,
         ),
         seed=42,
@@ -153,5 +142,5 @@ def test_acp_hook_with_real_local_dataset_batch(batch_size: int):
 
     assert len(out["task"]) == batch_size
     for i in range(batch_size):
-        expected_tag = "POS" if int(indicators[i].item()) == 1 else "NEG"
+        expected_tag = ACP_POSITIVE_TAG if int(indicators[i].item()) == 1 else ACP_NEGATIVE_TAG
         assert out["task"][i].endswith(expected_tag)
