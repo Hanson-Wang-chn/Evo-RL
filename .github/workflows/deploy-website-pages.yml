@@ -1,13 +1,6 @@
 name: Deploy Website to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
-      - kye/main
-    paths:
-      - website/**
-      - .github/workflows/deploy-website-pages.yml
   workflow_dispatch:
 
 permissions:
@@ -21,6 +14,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Temporarily disabled to keep the website non-public.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
