@@ -9,16 +9,30 @@ import lerobot.robots.piper_follower.piper_follower as piper_follower_module
 import lerobot.teleoperators.piper_leader.piper_leader as piper_leader_module
 import lerobot.utils.piper_sdk as piper_sdk_utils
 from lerobot.motors import MotorCalibration
+from lerobot.robots.bi_piper_follower import (
+    BiPiperFollower,
+    BiPiperFollowerConfig,
+    BiPiperXFollower,
+    BiPiperXFollowerConfig,
+)
 from lerobot.robots.piper_follower import (
     PiperFollower,
     PiperFollowerConfig,
+    PiperFollowerConfigBase,
     PiperXFollower,
     PiperXFollowerConfig,
 )
 from lerobot.robots.utils import make_robot_from_config
+from lerobot.teleoperators.bi_piper_leader import (
+    BiPiperLeader,
+    BiPiperLeaderConfig,
+    BiPiperXLeader,
+    BiPiperXLeaderConfig,
+)
 from lerobot.teleoperators.piper_leader import (
     PiperLeader,
     PiperLeaderConfig,
+    PiperLeaderConfigBase,
     PiperXLeader,
     PiperXLeaderConfig,
 )
@@ -477,3 +491,111 @@ def test_piper_lfs_pointer_urdf_raises_actionable_error(tmp_path):
         piper_leader_module._ensure_not_lfs_pointer(
             pointer_file, "assets/piper_description/urdf/pointer.urdf"
         )
+
+
+@pytest.mark.parametrize(
+    (
+        "teleop_cfg",
+        "robot_cfg",
+        "bi_teleop_cls",
+        "bi_robot_cls",
+        "left_teleop_cls",
+        "right_teleop_cls",
+        "left_robot_cls",
+        "right_robot_cls",
+    ),
+    [
+        (
+            BiPiperLeaderConfig(
+                left_arm_config=PiperLeaderConfigBase(port="can1", manual_control=False, sync_gripper=True),
+                right_arm_config=PiperLeaderConfigBase(port="can3", manual_control=False, sync_gripper=True),
+            ),
+            BiPiperFollowerConfig(
+                left_arm_config=PiperFollowerConfigBase(port="can0", sync_gripper=True),
+                right_arm_config=PiperFollowerConfigBase(port="can2", sync_gripper=True),
+            ),
+            BiPiperLeader,
+            BiPiperFollower,
+            PiperLeader,
+            PiperLeader,
+            PiperFollower,
+            PiperFollower,
+        ),
+        (
+            BiPiperXLeaderConfig(
+                left_arm_config=PiperLeaderConfigBase(port="can1", manual_control=False, sync_gripper=True),
+                right_arm_config=PiperLeaderConfigBase(port="can3", manual_control=False, sync_gripper=True),
+            ),
+            BiPiperXFollowerConfig(
+                left_arm_config=PiperFollowerConfigBase(port="can0", sync_gripper=True),
+                right_arm_config=PiperFollowerConfigBase(port="can2", sync_gripper=True),
+            ),
+            BiPiperXLeader,
+            BiPiperXFollower,
+            PiperXLeader,
+            PiperXLeader,
+            PiperXFollower,
+            PiperXFollower,
+        ),
+    ],
+)
+def test_bimanual_piper_leader_follower_roundtrip(
+    monkeypatch,
+    teleop_cfg,
+    robot_cfg,
+    bi_teleop_cls,
+    bi_robot_cls,
+    left_teleop_cls,
+    right_teleop_cls,
+    left_robot_cls,
+    right_robot_cls,
+):
+    patch_fake_sdk(monkeypatch)
+
+    teleop = make_teleoperator_from_config(teleop_cfg)
+    robot = make_robot_from_config(robot_cfg)
+
+    assert isinstance(teleop, bi_teleop_cls)
+    assert isinstance(robot, bi_robot_cls)
+    assert isinstance(teleop.left_arm, left_teleop_cls)
+    assert isinstance(teleop.right_arm, right_teleop_cls)
+    assert isinstance(robot.left_arm, left_robot_cls)
+    assert isinstance(robot.right_arm, right_robot_cls)
+
+    teleop.left_arm.calibration = make_identity_calibration()
+    teleop.right_arm.calibration = make_identity_calibration()
+    robot.left_arm.calibration = make_identity_calibration()
+    robot.right_arm.calibration = make_identity_calibration()
+
+    teleop.connect(calibrate=False)
+    robot.connect(calibrate=False)
+    try:
+        action = teleop.get_action()
+        assert "left_joint_1.pos" in action
+        assert "right_joint_1.pos" in action
+
+        sent = robot.send_action(action)
+        obs = robot.get_observation()
+
+        assert robot.left_arm.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
+        assert robot.right_arm.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
+        assert robot.left_arm.arm.last_gripper[0] == 42000
+        assert robot.right_arm.arm.last_gripper[0] == 42000
+
+        assert sent["left_joint_1.pos"] == 10.0
+        assert sent["right_joint_1.pos"] == 10.0
+        assert sent["left_gripper.pos"] == 42.0
+        assert sent["right_gripper.pos"] == 42.0
+        assert obs["left_joint_1.pos"] == 11.0
+        assert obs["right_joint_1.pos"] == 11.0
+        assert obs["left_gripper.pos"] == 43.0
+        assert obs["right_gripper.pos"] == 43.0
+
+        teleop.send_feedback(action)
+        assert teleop.left_arm.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
+        assert teleop.right_arm.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
+        assert teleop.left_arm.arm.last_gripper[0] == 42000
+        assert teleop.right_arm.arm.last_gripper[0] == 42000
+    finally:
+        teleop.disconnect()
+        robot.disconnect()

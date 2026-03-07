@@ -86,6 +86,7 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
+    bi_piper_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -108,6 +109,7 @@ from lerobot.scripts.recording_loop import record_loop
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_piper_leader,
     bi_so_leader,
     homunculus,
     koch_leader,
@@ -123,6 +125,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
+    sanity_check_bimanual_piper_pair,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
@@ -249,6 +252,7 @@ class RecordConfig:
 
         if self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+        sanity_check_bimanual_piper_pair(self.robot, self.teleop)
         if not self.intervention_toggle_key or len(self.intervention_toggle_key) != 1:
             raise ValueError("`intervention_toggle_key` must be a single character.")
 

@@ -54,6 +54,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_openarm_follower,
+    bi_piper_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,

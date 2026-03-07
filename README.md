@@ -21,12 +21,13 @@
 
 ## 🎯 Evo-RL Focus
 
-- **Open real-world RL on two platforms**: we build and release full real-world RL pipelines on SO101 and AgileX PiPER.
+- **Open real-world RL on two platforms**: we build and release full real-world RL pipelines on SO101 and AgileX (PiPER/PiPER-X).
 - **Open code, models, and datasets for reproducibility**: we continuously release runnable offline RL assets so more people can reproduce results and apply them to real-world tasks.
 - **Open algorithm and community co-evolution**: we reproduce existing real-world RL methods, propose new methods, and keep publishing data/benchmarks to grow a collaborative open-source community.
 
 ## 🚀 News
 
+- **[2026-03-07]** Added AgileX (PiPER/PiPER-X) support for real-world RL.
 - **[2026-02-26]** First SO101 real-world RL baseline and reproducible CLI workflow are released.
 
 ## 🧭 Table of Contents
@@ -202,7 +203,9 @@ If needed, you can also use temporary device paths (for example `/dev/ttyACM*` a
 
 <a id="agilex-piper-setup"></a>
 
-#### AgileX PiPER
+#### AgileX (PiPER/PiPER-X)
+
+PiPER arms in master/teaching mode cannot receive external control commands, so all arms must be configured to follower/motion-output mode (0xFC), and firmware must be version 1.8.5 or above.
 
 For PiPER-series robots, make sure Git LFS assets are pulled before running teleoperation:
 
@@ -215,7 +218,7 @@ For PiPER setup, PiPER uses CAN interfaces instead of serial ports.
 So first run `lerobot-setup-can` to confirm CAN interfaces are available:
 
 ```bash
-lerobot-setup-can --mode=setup --interfaces=can0,can1
+lerobot-setup-can --mode=setup --interfaces=<LEFT_FOLLOWER_CAN_PORT>,<LEFT_LEADER_CAN_PORT>,<RIGHT_FOLLOWER_CAN_PORT>,<RIGHT_LEADER_CAN_PORT>
 ```
 
 For single-arm users, run the command below to verify the system is ready:
@@ -223,14 +226,34 @@ For single-arm users, run the command below to verify the system is ready:
 ```bash
 lerobot-teleoperate \
   --robot.type=piperx_follower \
-  --robot.port=can0 \
+  --robot.port=<FOLLOWER_CAN_PORT> \
   --robot.id=my_piperx_follower \
   --robot.require_calibration=false \
   --teleop.type=piperx_leader \
-  --teleop.port=can1 \
+  --teleop.port=<LEADER_CAN_PORT> \
   --teleop.id=my_piperx_leader \
   --teleop.require_calibration=false
 ```
+
+For bimanual users, run this command to verify dual-arm teleoperation:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_piperx_follower \
+  --robot.id=my_bi_piperx_follower \
+  --robot.left_arm_config.port=<LEFT_FOLLOWER_CAN_PORT> \
+  --robot.right_arm_config.port=<RIGHT_FOLLOWER_CAN_PORT> \
+  --robot.left_arm_config.require_calibration=false \
+  --robot.right_arm_config.require_calibration=false \
+  --teleop.type=bi_piperx_leader \
+  --teleop.id=my_bi_piperx_leader \
+  --teleop.left_arm_config.port=<LEFT_LEADER_CAN_PORT> \
+  --teleop.right_arm_config.port=<RIGHT_LEADER_CAN_PORT> \
+  --teleop.left_arm_config.require_calibration=false \
+  --teleop.right_arm_config.require_calibration=false
+```
+
+For PiPER (non-X), replace `bi_piperx_follower`/`bi_piperx_leader` with `bi_piper_follower`/`bi_piper_leader`.
 
 <a id="data-collection"></a>
 
@@ -265,32 +288,31 @@ lerobot-human-inloop-record \
 
 Recommendation: use **`fourcc: "MJPG"`** for OpenCV and **`warmup_s`** for RealSense. In this example `front` uses RealSense, but you can switch it to OpenCV with the same structure.
 
-#### AgileX PiPER
+#### AgileX (PiPER/PiPER-X)
 
-PiPER mode note (policy-sync / human-in-the-loop):
-
-- Leader/follower linkage is configured via `MasterSlaveConfig(linkage_config, feedback_offset, ctrl_offset, linkage_offset)`.
-- `linkage_config=0xFA`: teaching-input arm.
-- `linkage_config=0xFC`: motion-output arm.
-- `0xFA` is not suitable when the arm must accept external control commands. For policy execution + intervention switching, keep both teleop and robot arms in `0xFC`.
-- After switching role mode (`0xFA` <-> `0xFC`), perform a full power-cycle before validation.
+Bimanual template (left/right, PiPER-X example):
 
 ```bash
 lerobot-human-inloop-record \
-  --robot.type=piper_follower \
-  --robot.port=can0 \
-  --robot.id=my_piper_follower \
-  --robot.require_calibration=false \
-  --teleop.type=piper_leader \
-  --teleop.port=can1 \
-  --teleop.id=my_piper_leader \
-  --teleop.require_calibration=false \
+  --robot.type=bi_piperx_follower \
+  --robot.id=my_bi_piperx_follower \
+  --robot.left_arm_config.port=<LEFT_FOLLOWER_CAN_PORT> \
+  --robot.right_arm_config.port=<RIGHT_FOLLOWER_CAN_PORT> \
+  --robot.left_arm_config.require_calibration=false \
+  --robot.right_arm_config.require_calibration=false \
+  --teleop.type=bi_piperx_leader \
+  --teleop.id=my_bi_piperx_leader \
+  --teleop.left_arm_config.port=<LEFT_LEADER_CAN_PORT> \
+  --teleop.right_arm_config.port=<RIGHT_LEADER_CAN_PORT> \
+  --teleop.left_arm_config.require_calibration=false \
+  --teleop.right_arm_config.require_calibration=false \
   --dataset.repo_id=<HF_USERNAME_OR_ORG>/<DATASET_NAME> \
   --dataset.single_task="<YOUR_TASK_DESCRIPTION>" \
   --dataset.num_episodes=<NUM_EPISODES> \
   --dataset.episode_time_s=<EPISODE_SECONDS> \
   --dataset.reset_time_s=<RESET_SECONDS> \
-  --dataset.push_to_hub=true
+  --dataset.push_to_hub=true \
+  --display_data=true
 ```
 
 Hotkeys:

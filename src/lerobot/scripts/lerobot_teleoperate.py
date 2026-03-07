@@ -71,6 +71,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_openarm_follower,
+    bi_piper_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -87,6 +88,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_piper_leader,
     bi_so_leader,
     gamepad,
     homunculus,
@@ -100,6 +102,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
+from lerobot.utils.control_utils import sanity_check_bimanual_piper_pair
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -206,6 +209,7 @@ def teleop_loop(
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
+    sanity_check_bimanual_piper_pair(cfg.robot, cfg.teleop)
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
         init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
