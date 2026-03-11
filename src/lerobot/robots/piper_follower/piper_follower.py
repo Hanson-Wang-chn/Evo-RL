@@ -54,6 +54,7 @@ class PiperFollower(Robot):
         self.config = config
         self._is_connected = False
         self._last_mode_refresh_t = 0.0
+        self._teleop_send_only_mode = False
 
         interface_cls, _ = get_piper_sdk()
         self.arm = interface_cls(
@@ -70,24 +71,36 @@ class PiperFollower(Robot):
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
+    @property
+    def _motors_ft(self) -> dict[str, type]:
+        return dict.fromkeys(PIPER_ACTION_KEYS, float)
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**dict.fromkeys(PIPER_ACTION_KEYS, float), **self._cameras_ft}
+        return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return dict.fromkeys(PIPER_ACTION_KEYS, float)
+        return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
-        return self._is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return self._is_connected and (
+            self._teleop_send_only_mode or all(cam.is_connected for cam in self.cameras.values())
+        )
+
+    def set_teleop_send_only_mode(self, enabled: bool) -> None:
+        if self._is_connected:
+            raise RuntimeError("teleop send-only mode must be configured before connecting the robot.")
+        self._teleop_send_only_mode = enabled
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.arm.ConnectPort()
+        self.arm.ConnectPort(start_thread=not self._teleop_send_only_mode)
         if self.config.startup_sleep_s > 0:
             time.sleep(self.config.startup_sleep_s)
-        guard_piper_ctrl_mode_on_connect(arm=self.arm, interface_name=self.config.port)
+        if not self._teleop_send_only_mode:
+            guard_piper_ctrl_mode_on_connect(arm=self.arm, interface_name=self.config.port)
 
         self._is_connected = True
         connected_cameras = []
@@ -103,12 +116,16 @@ class PiperFollower(Robot):
             # Enable behavior should be controlled by enable_on_connect, independent from calibrate flag.
             # This keeps connect(calibrate=False) commandable for callers that only want to skip interactive calibration.
             should_enable = self.config.enable_on_connect
-            if should_enable and not self._wait_enable(self.config.enable_timeout_s):
-                logger.warning("Piper follower did not report enabled state before timeout.")
+            if should_enable:
+                if self._teleop_send_only_mode:
+                    self.arm.EnablePiper()
+                elif not self._wait_enable(self.config.enable_timeout_s):
+                    logger.warning("Piper follower did not report enabled state before timeout.")
 
-            for cam in self.cameras.values():
-                cam.connect()
-                connected_cameras.append(cam)
+            if not self._teleop_send_only_mode:
+                for cam in self.cameras.values():
+                    cam.connect()
+                    connected_cameras.append(cam)
         except Exception:
             self.arm.DisconnectPort()
             for cam in connected_cameras:
@@ -239,6 +256,10 @@ class PiperFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        if self._teleop_send_only_mode:
+            raise RuntimeError(
+                f"{self} was connected in teleop send-only mode, so follower observations are unavailable."
+            )
         obs: dict[str, float] = self._read_raw_observation()
 
         for cam_key, cam in self.cameras.items():
@@ -295,7 +316,8 @@ class PiperFollower(Robot):
         finally:
             self.arm.DisconnectPort()
             for cam in self.cameras.values():
-                cam.disconnect()
+                if cam.is_connected:
+                    cam.disconnect()
             self._is_connected = False
             logger.info("%s disconnected.", self)
 

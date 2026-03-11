@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 
-from lerobot.teleoperators.piper_leader import PiperLeaderConfigBase
+from lerobot.teleoperators.piper_leader import PiperLeaderConfigBase, PiperXLeaderConfigBase
 
 from ..config import TeleoperatorConfig
 
@@ -28,6 +28,7 @@ class BiPiperLeaderConfig(TeleoperatorConfig):
 
     left_arm_config: PiperLeaderConfigBase
     right_arm_config: PiperLeaderConfigBase
+    process_isolation: bool = True
 
 
 @TeleoperatorConfig.register_subclass("bi_piperx_leader")
@@ -35,5 +36,6 @@ class BiPiperLeaderConfig(TeleoperatorConfig):
 class BiPiperXLeaderConfig(TeleoperatorConfig):
     """Configuration class for bimanual PiPER-X leader teleoperators."""
 
-    left_arm_config: PiperLeaderConfigBase
-    right_arm_config: PiperLeaderConfigBase
+    left_arm_config: PiperXLeaderConfigBase
+    right_arm_config: PiperXLeaderConfigBase
+    process_isolation: bool = True

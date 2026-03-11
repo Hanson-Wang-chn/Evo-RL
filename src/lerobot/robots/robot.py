@@ -178,6 +178,10 @@ class Robot(abc.ABC):
         """
         pass
 
+    def set_teleop_send_only_mode(self, enabled: bool) -> None:
+        """Optionally let robots skip observation-side work during pure teleoperation send loops."""
+        del enabled
+
     @abc.abstractmethod
     def get_observation(self) -> RobotObservation:
         """

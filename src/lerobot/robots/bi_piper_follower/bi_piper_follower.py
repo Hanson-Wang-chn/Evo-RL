@@ -118,6 +118,10 @@ class BiPiperFollower(Robot):
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
+    def set_teleop_send_only_mode(self, enabled: bool) -> None:
+        self.left_arm.set_teleop_send_only_mode(enabled)
+        self.right_arm.set_teleop_send_only_mode(enabled)
+
     @property
     def is_calibrated(self) -> bool:
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated

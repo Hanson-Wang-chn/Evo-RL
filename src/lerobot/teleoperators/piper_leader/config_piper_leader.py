@@ -18,6 +18,9 @@ from dataclasses import dataclass
 
 from ..config import TeleoperatorConfig
 
+DEFAULT_PIPER_GRAVITY_COMP_TX_RATIO = (0.2, 0.2, 0.2, 0.2, 0.2, 0.2)
+DEFAULT_PIPERX_GRAVITY_COMP_TX_RATIO = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+
 
 @dataclass
 class PiperLeaderConfigBase:
@@ -52,7 +55,7 @@ class PiperLeaderConfigBase:
 
     # Gravity compensation settings (used when manual_control=true)
     gravity_comp_control_hz: float = 200.0
-    gravity_comp_tx_ratio: tuple[float, float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    gravity_comp_tx_ratio: tuple[float, float, float, float, float, float] = DEFAULT_PIPER_GRAVITY_COMP_TX_RATIO
     gravity_comp_torque_limit: float = 8.0
     gravity_comp_mit_kp: float = 0.0
     gravity_comp_mit_kd: float = 0.0
@@ -102,8 +105,13 @@ class PiperLeaderConfig(TeleoperatorConfig, PiperLeaderConfigBase):
         _validate_piper_leader_config(self)
 
 
+@dataclass
+class PiperXLeaderConfigBase(PiperLeaderConfigBase):
+    gravity_comp_tx_ratio: tuple[float, float, float, float, float, float] = DEFAULT_PIPERX_GRAVITY_COMP_TX_RATIO
+
+
 @TeleoperatorConfig.register_subclass("piperx_leader")
 @dataclass
-class PiperXLeaderConfig(TeleoperatorConfig, PiperLeaderConfigBase):
+class PiperXLeaderConfig(TeleoperatorConfig, PiperXLeaderConfigBase):
     def __post_init__(self):
         _validate_piper_leader_config(self)

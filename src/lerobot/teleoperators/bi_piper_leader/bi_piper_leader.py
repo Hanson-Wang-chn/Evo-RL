@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import logging
+import multiprocessing as mp
+import traceback
 from functools import cached_property
 from typing import Any
 
@@ -25,12 +27,157 @@ from lerobot.teleoperators.piper_leader import (
     PiperXLeader,
     PiperXLeaderConfig,
 )
+from lerobot.utils.piper_sdk import PIPER_ACTION_KEYS
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_bi_piper_leader import BiPiperLeaderConfig, BiPiperXLeaderConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _bi_piper_leader_worker(conn, arm_cls, arm_config) -> None:
+    arm = arm_cls(arm_config)
+    try:
+        while True:
+            request = conn.recv()
+            command = request["command"]
+            if command == "__close__":
+                break
+
+            try:
+                if command == "__get_is_calibrated__":
+                    result = arm.is_calibrated
+                else:
+                    args = request.get("args", ())
+                    kwargs = request.get("kwargs", {})
+                    result = getattr(arm, command)(*args, **kwargs)
+                conn.send({"ok": True, "result": result})
+            except Exception as exc:  # noqa: BLE001
+                conn.send(
+                    {
+                        "ok": False,
+                        "error": repr(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
+    finally:
+        try:
+            if arm.is_connected:
+                arm.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        conn.close()
+
+
+class _PiperLeaderProcessProxy:
+    def __init__(self, arm_cls, arm_config):
+        self._arm_cls = arm_cls
+        self._arm_config = arm_config
+        self._ctx = mp.get_context("spawn")
+        self._parent_conn = None
+        self._process = None
+        self._is_connected = False
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return dict.fromkeys(PIPER_ACTION_KEYS, float)
+
+    @cached_property
+    def feedback_features(self) -> dict[str, type]:
+        return dict.fromkeys(PIPER_ACTION_KEYS, float)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        if self._process is None:
+            return False
+        return bool(self._call("__get_is_calibrated__"))
+
+    def _ensure_process(self) -> None:
+        if self._process is not None and self._process.is_alive():
+            return
+        parent_conn, child_conn = self._ctx.Pipe()
+        process = self._ctx.Process(
+            target=_bi_piper_leader_worker,
+            args=(child_conn, self._arm_cls, self._arm_config),
+            daemon=True,
+        )
+        process.start()
+        child_conn.close()
+        self._parent_conn = parent_conn
+        self._process = process
+
+    def _call(self, command: str, *args, **kwargs):
+        self._ensure_process()
+        assert self._parent_conn is not None
+        self._parent_conn.send({"command": command, "args": args, "kwargs": kwargs})
+        response = self._parent_conn.recv()
+        if response["ok"]:
+            return response.get("result")
+        raise RuntimeError(
+            f"bi_piper leader worker command '{command}' failed: {response['error']}\n"
+            f"{response['traceback']}"
+        )
+
+    def connect(self, calibrate: bool = True) -> None:
+        try:
+            self._call("connect", calibrate)
+            self._is_connected = True
+        except Exception:
+            self.disconnect()
+            raise
+
+    def calibrate(self) -> None:
+        self._call("calibrate")
+
+    def configure(self) -> None:
+        self._call("configure")
+
+    def setup_motors(self) -> None:
+        self._call("setup_motors")
+
+    def set_manual_control(self, enabled: bool) -> None:
+        self._call("set_manual_control", enabled)
+
+    def get_action(self) -> RobotAction:
+        return self._call("get_action")
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        self._call("send_feedback", feedback)
+
+    def disconnect(self) -> None:
+        if self._process is None:
+            self._is_connected = False
+            return
+
+        if self._parent_conn is not None:
+            try:
+                if self._is_connected:
+                    self._call("disconnect")
+            except Exception:
+                pass
+            try:
+                self._parent_conn.send({"command": "__close__"})
+            except Exception:
+                pass
+            try:
+                self._parent_conn.close()
+            except Exception:
+                pass
+
+        if self._process.is_alive():
+            self._process.join(timeout=2.0)
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=1.0)
+
+        self._parent_conn = None
+        self._process = None
+        self._is_connected = False
 
 
 class BiPiperLeader(Teleoperator):
@@ -74,6 +221,7 @@ class BiPiperLeader(Teleoperator):
     def __init__(self, config: BiPiperLeaderConfig | BiPiperXLeaderConfig):
         super().__init__(config)
         self.config = config
+        self._use_process_isolation = config.process_isolation
 
         if config.type == "bi_piperx_leader":
             arm_config_cls = PiperXLeaderConfig
@@ -85,8 +233,12 @@ class BiPiperLeader(Teleoperator):
         left_arm_config = self._build_arm_config(arm_config_cls, config.left_arm_config, "left")
         right_arm_config = self._build_arm_config(arm_config_cls, config.right_arm_config, "right")
 
-        self.left_arm = arm_cls(left_arm_config)
-        self.right_arm = arm_cls(right_arm_config)
+        if self._use_process_isolation:
+            self.left_arm = _PiperLeaderProcessProxy(arm_cls, left_arm_config)
+            self.right_arm = _PiperLeaderProcessProxy(arm_cls, right_arm_config)
+        else:
+            self.left_arm = arm_cls(left_arm_config)
+            self.right_arm = arm_cls(right_arm_config)
 
     @cached_property
     def action_features(self) -> dict[str, type]:

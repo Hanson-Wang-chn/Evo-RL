@@ -46,6 +46,8 @@ PIPER_CALIB_IDS = {key: idx for idx, key in enumerate(PIPER_CALIB_KEYS)}
 DEFAULT_PIPER_GRAVITY_URDF = "assets/piper_description/urdf/piper_no_gripper_description.urdf"
 DEFAULT_PIPERX_GRAVITY_URDF = "assets/piper_x_description/urdf/piper_x_description_no_gripper.urdf"
 GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+MANUAL_CONTROL_FRESH_FEEDBACK_TIMEOUT_S = 0.03
+MANUAL_CONTROL_FRESH_FEEDBACK_POLL_S = 0.001
 
 
 def _ensure_not_lfs_pointer(path_obj: Any, relpath: str) -> None:
@@ -76,6 +78,8 @@ class PiperLeader(Teleoperator):
         self._manual_control_enabled: bool | None = None
         self._last_mode_refresh_t = 0.0
         self._gravity_comp_loop: PiperGravityCompensationLoop | None = None
+        self._last_feedback_joint_timestamp = 0.0
+        self._last_feedback_gripper_timestamp = 0.0
 
         interface_cls, _ = get_piper_sdk()
         self.arm = interface_cls(
@@ -107,6 +111,8 @@ class PiperLeader(Teleoperator):
         self._is_connected = True
         # Recompute control mode on every fresh connection.
         self._manual_control_enabled = None
+        self._last_feedback_joint_timestamp = 0.0
+        self._last_feedback_gripper_timestamp = 0.0
         try:
             self.configure()
             if not self.is_calibrated and calibrate and self.config.require_calibration:
@@ -292,23 +298,63 @@ class PiperLeader(Teleoperator):
             return None
         return abs(milli_to_unit(getattr(gripper_state, "grippers_angle", 0)))
 
+    def _wait_for_fresh_feedback_if_needed(self) -> None:
+        if self._manual_control_enabled is not True:
+            return
+
+        needs_fresh_gripper = self.config.sync_gripper and self.config.fallback_to_feedback
+        deadline = time.monotonic() + MANUAL_CONTROL_FRESH_FEEDBACK_TIMEOUT_S
+        while time.monotonic() < deadline:
+            joint_ts = float(getattr(self.arm.GetArmJointMsgs(), "time_stamp", 0.0) or 0.0)
+            has_fresh_joint = joint_ts > self._last_feedback_joint_timestamp
+            if not has_fresh_joint:
+                time.sleep(MANUAL_CONTROL_FRESH_FEEDBACK_POLL_S)
+                continue
+            if not needs_fresh_gripper:
+                return
+
+            gripper_ts = float(getattr(self.arm.GetArmGripperMsgs(), "time_stamp", 0.0) or 0.0)
+            has_fresh_gripper = gripper_ts > self._last_feedback_gripper_timestamp
+            if has_fresh_gripper:
+                return
+            time.sleep(MANUAL_CONTROL_FRESH_FEEDBACK_POLL_S)
+
     def _read_raw_action(self) -> RobotAction:
         used_feedback_for_joints = False
         action: dict[str, float] | None = None
-        if self.config.prefer_ctrl_messages:
+
+        # In manual-control teleop, the operator physically backdrives the leader arm while a
+        # background gravity-compensation thread emits MIT commands. In that mode, `GetArmJointCtrl`
+        # reflects transmitted control targets rather than the operator's live pose, which can lag
+        # or jump under dual-arm load. Prefer direct joint feedback so teleop follows the real arm.
+        prefer_feedback = self._manual_control_enabled is True
+        if prefer_feedback:
+            self._wait_for_fresh_feedback_if_needed()
+            action = self._read_joint_from_feedback()
+            used_feedback_for_joints = action is not None
+            self._last_feedback_joint_timestamp = float(
+                getattr(self.arm.GetArmJointMsgs(), "time_stamp", 0.0) or 0.0
+            )
+
+        if action is None and self.config.prefer_ctrl_messages:
             action = self._read_joint_from_ctrl()
 
-        if action is None and self.config.fallback_to_feedback:
+        if action is None and self.config.fallback_to_feedback and not used_feedback_for_joints:
             action = self._read_joint_from_feedback()
             used_feedback_for_joints = action is not None
 
         if action is None:
             action = {f"{joint_name}.pos": 0.0 for joint_name in PIPER_JOINT_NAMES}
 
-        use_ctrl_for_gripper = self.config.prefer_ctrl_messages and not used_feedback_for_joints
+        use_ctrl_for_gripper = (
+            self.config.prefer_ctrl_messages and not prefer_feedback and not used_feedback_for_joints
+        )
         gripper_pos = self._read_gripper_from_ctrl() if use_ctrl_for_gripper else None
         if gripper_pos is None and self.config.fallback_to_feedback:
             gripper_pos = self._read_gripper_from_feedback()
+            self._last_feedback_gripper_timestamp = float(
+                getattr(self.arm.GetArmGripperMsgs(), "time_stamp", 0.0) or 0.0
+            )
         action["gripper.pos"] = 0.0 if gripper_pos is None else gripper_pos
         return action
 

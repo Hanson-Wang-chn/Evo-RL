@@ -52,6 +52,7 @@ lerobot-teleoperate \
 """
 
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
@@ -62,6 +63,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # no
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.processor import (
+    IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -109,6 +111,9 @@ from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 
+LOOP_STATUS_INTERVAL_S = 0.5
+
+
 @dataclass
 class TeleoperateConfig:
     # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
@@ -125,6 +130,33 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to  display compressed images in Rerun
     display_compressed_images: bool = False
+
+
+def _processor_pipeline_needs_observation(
+    processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
+) -> bool:
+    return not all(isinstance(step, IdentityProcessorStep) for step in processor.steps)
+
+
+def _teleop_needs_robot_observation(
+    display_data: bool,
+    teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
+    robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
+) -> bool:
+    return (
+        display_data
+        or _processor_pipeline_needs_observation(teleop_action_processor)
+        or _processor_pipeline_needs_observation(robot_action_processor)
+    )
+
+
+def _configure_robot_for_lightweight_teleop(
+    robot: Robot,
+    should_fetch_obs: bool,
+) -> None:
+    if should_fetch_obs:
+        return
+    robot.set_teleop_send_only_mode(True)
 
 
 def teleop_loop(
@@ -157,6 +189,10 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    last_loop_status_t = 0.0
+    should_fetch_obs = _teleop_needs_robot_observation(
+        display_data, teleop_action_processor, robot_action_processor
+    )
 
     while True:
         loop_start = time.perf_counter()
@@ -165,7 +201,7 @@ def teleop_loop(
         # Not really needed for now other than for visualization
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
-        obs = robot.get_observation()
+        obs = robot.get_observation() if should_fetch_obs else {}
 
         # Get teleop action
         raw_action = teleop.get_action()
@@ -191,16 +227,20 @@ def teleop_loop(
 
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # Display the final robot action that was sent
             for motor, value in robot_action_to_send.items():
                 print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 3)
+            if sys.stdout.isatty():
+                move_cursor_up(len(robot_action_to_send) + 3)
 
         dt_s = time.perf_counter() - loop_start
         precise_sleep(max(1 / fps - dt_s, 0.0))
         loop_s = time.perf_counter() - loop_start
-        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-        move_cursor_up(1)
+        now = time.monotonic()
+        if now - last_loop_status_t >= LOOP_STATUS_INTERVAL_S:
+            print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+            if sys.stdout.isatty():
+                move_cursor_up(1)
+            last_loop_status_t = now
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
@@ -222,6 +262,10 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    should_fetch_obs = _teleop_needs_robot_observation(
+        cfg.display_data, teleop_action_processor, robot_action_processor
+    )
+    _configure_robot_for_lightweight_teleop(robot, should_fetch_obs)
 
     teleop.connect()
     robot.connect()
