@@ -1,0 +1,2 @@
+# Install the LeRobot core package plus the ARX5 runtime extras.
+-e .[arx5]

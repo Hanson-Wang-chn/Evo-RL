@@ -125,6 +125,7 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
+arx5 = ["lerobot[intelrealsense]", "lerobot[pi]"]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
@@ -216,6 +217,7 @@ lerobot-human-inloop-record="lerobot.scripts.lerobot_human_inloop_record:main"
 lerobot-value-train="lerobot.scripts.lerobot_value_train:main"
 lerobot-value-infer="lerobot.scripts.lerobot_value_infer:main"
 lerobot-dataset-report="lerobot.scripts.lerobot_dataset_report:main"
+lerobot-arx5-infer="lerobot.scripts.lerobot_arx5_infer:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -225,6 +227,7 @@ where = ["src"]
 lerobot = [
     "assets/piper_description/**/*",
     "assets/piper_x_description/**/*",
+    "robots/arx5_follower/*.json",
 ]
 
 [tool.ruff]
