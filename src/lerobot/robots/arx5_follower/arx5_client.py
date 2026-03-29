@@ -91,6 +91,10 @@ class _StubArm:
     def set_ee_pose_xyzrpy(self, xyzrpy: list[float]) -> None:
         self._ee_pose[:6] = np.asarray(xyzrpy, dtype=np.float64)
 
+    def set_joint_positions(self, joints: list[float]) -> None:
+        joints_array = np.asarray(joints, dtype=np.float64)
+        self._joint_positions[: min(6, joints_array.size)] = joints_array[:6]
+
     def set_catch_pos(self, value: float) -> None:
         self._ee_pose[6] = float(value)
         self._joint_positions[6] = float(value)
@@ -115,6 +119,7 @@ class ARX5ArmClient:
     ):
         self.recorded_pose_path = recorded_pose_path
         self.recorded_pose_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_sent_pose = [0.0] * 7
 
         if use_stub or not HAS_ARX_SDK:
             self.arm = _StubArm({"can_port": can_port, "type": arm_type})
@@ -123,27 +128,53 @@ class ARX5ArmClient:
 
         self._last_sent_pose = self.get_state()
 
-    def get_state(self) -> list[float]:
-        ee_pose = np.asarray(self.arm.get_ee_pose_xyzrpy(), dtype=np.float64)
-        joint_positions = np.asarray(self.arm.get_joint_positions(), dtype=np.float64)
-        gripper = float(joint_positions[6]) if joint_positions.size > 6 else 0.0
+    def _read_gripper_position(self) -> float:
+        if hasattr(self.arm, "get_catch_pos"):
+            value = self.arm.get_catch_pos()
+            if isinstance(value, (list, tuple, np.ndarray)):
+                return float(value[0]) if len(value) > 0 else 0.0
+            return float(value)
 
+        if hasattr(self, "_last_sent_pose") and len(self._last_sent_pose) >= 7:
+            return float(self._last_sent_pose[6])
+        return 0.0
+
+    def get_state(self) -> list[float]:
+        joint_positions = np.asarray(self.arm.get_joint_positions(), dtype=np.float64)
+        gripper = self._read_gripper_position()
         state = np.zeros(7, dtype=np.float64)
-        state[:6] = ee_pose[:6]
+        state[: min(6, joint_positions.size)] = joint_positions[:6]
         state[6] = gripper
         return state.tolist()
 
-    def send_pose(self, pose: list[float]) -> list[float]:
-        full_pose = list(pose[:7])
-        if len(full_pose) < 7:
-            full_pose.extend([0.0] * (7 - len(full_pose)))
-        self.arm.set_ee_pose_xyzrpy(full_pose[:6])
-        self.arm.set_catch_pos(float(full_pose[6]))
-        self._last_sent_pose = full_pose
-        return full_pose
+    def get_joint_positions(self) -> list[float]:
+        joint_positions = np.asarray(self.arm.get_joint_positions(), dtype=np.float64)
+        gripper = self._read_gripper_position()
+        state = np.zeros(7, dtype=np.float64)
+        state[: min(6, joint_positions.size)] = joint_positions[:6]
+        state[6] = gripper
+        return state.tolist()
+
+    def send_joint(self, joint: list[float]) -> list[float]:
+        full_joint = list(joint[:7])
+        if len(full_joint) < 7:
+            full_joint.extend([0.0] * (7 - len(full_joint)))
+
+        if hasattr(self.arm, "set_joint_positions"):
+            self.arm.set_joint_positions(full_joint[:6])
+        elif hasattr(self.arm, "set_joint_pos"):
+            self.arm.set_joint_pos(full_joint[:6])
+        elif hasattr(self.arm, "set_joints"):
+            self.arm.set_joints(full_joint[:6])
+        else:
+            raise RuntimeError("ARX5 SDK arm object does not expose a supported joint write API.")
+
+        self.arm.set_catch_pos(float(full_joint[6]))
+        self._last_sent_pose = full_joint
+        return full_joint
 
     def hold_position(self) -> None:
-        self.send_pose(self.get_state())
+        self.send_joint(self.get_state())
         time.sleep(0.2)
 
     def go_home(self) -> None:
@@ -177,7 +208,7 @@ class ARX5ArmClient:
         for index in range(1, num_steps + 1):
             interpolation = index / num_steps
             pose = start + (target - start) * interpolation
-            self.send_pose(pose.tolist())
+            self.send_joint(pose.tolist())
             if index < num_steps and step_interval_s > 0:
                 time.sleep(step_interval_s)
         return target.tolist()

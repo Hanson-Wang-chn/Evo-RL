@@ -42,13 +42,13 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.robots.arx5_follower import ARX5_CAMERA_KEYS, ARX5_REAL_STATE_KEYS, ARX5Follower, ARX5FollowerConfig
+from lerobot.robots.arx5_follower import ARX5_REAL_STATE_KEYS, ARX5Follower, ARX5FollowerConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import auto_select_torch_device
 from lerobot.configs.policies import PreTrainedConfig
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 DEFAULT_POLICY_PATH = "lerobot/pi05_base"
@@ -57,7 +57,12 @@ DEFAULT_LOCAL_CAMERA_MAP = {
     "left_wrist_0_rgb": "wrist",
     "right_wrist_0_rgb": "front",
 }
+ARX5_MULTI_CUPS_CAMERA_MAP = {
+    "base": "front",
+    "right_wrist": "wrist",
+}
 DEFAULT_STATS_PATH = files("lerobot.robots.arx5_follower").joinpath("pi05_arx5_default_stats.json")
+OBS_IMAGE_PREFIX = "observation.images."
 
 
 class LoopState(Enum):
@@ -103,6 +108,35 @@ def _parse_camera_specs(specs: list[str]) -> dict[str, str]:
     return mapping
 
 
+def _get_policy_image_keys(policy_cfg: PreTrainedConfig) -> list[str]:
+    return [
+        key.removeprefix(OBS_IMAGE_PREFIX)
+        for key in policy_cfg.input_features
+        if key.startswith(OBS_IMAGE_PREFIX)
+    ]
+
+
+def _get_required_policy_camera_keys(policy_cfg: PreTrainedConfig) -> list[str]:
+    return [key for key in _get_policy_image_keys(policy_cfg) if not key.startswith("empty_camera_")]
+
+
+def _resolve_local_camera_map(policy_cfg: PreTrainedConfig) -> dict[str, str]:
+    required_policy_keys = _get_required_policy_camera_keys(policy_cfg)
+    required_policy_key_set = set(required_policy_keys)
+
+    if required_policy_key_set.issubset(DEFAULT_LOCAL_CAMERA_MAP):
+        return {policy_key: DEFAULT_LOCAL_CAMERA_MAP[policy_key] for policy_key in required_policy_keys}
+
+    if required_policy_key_set.issubset(ARX5_MULTI_CUPS_CAMERA_MAP):
+        return {policy_key: ARX5_MULTI_CUPS_CAMERA_MAP[policy_key] for policy_key in required_policy_keys}
+
+    raise ValueError(
+        "Unsupported ARX5 camera layout for this checkpoint. "
+        f"Policy expects {sorted(required_policy_key_set)} but the runtime only knows how to map "
+        f"{sorted(DEFAULT_LOCAL_CAMERA_MAP)} or {sorted(ARX5_MULTI_CUPS_CAMERA_MAP)}."
+    )
+
+
 def _list_realsense_cameras() -> None:
     try:
         cameras = RealSenseCamera.find_cameras()
@@ -124,6 +158,8 @@ def _list_realsense_cameras() -> None:
 def _make_camera_configs(
     *,
     camera_specs: dict[str, str],
+    local_camera_map: dict[str, str],
+    required_policy_camera_keys: list[str],
     use_usb_cams: bool,
     width: int,
     height: int,
@@ -131,13 +167,20 @@ def _make_camera_configs(
     flipped_local_cameras: set[str],
 ) -> dict[str, Any]:
     configs = {}
-    local_to_policy = {local_name: policy_name for policy_name, local_name in DEFAULT_LOCAL_CAMERA_MAP.items()}
+    local_to_policy = {local_name: policy_name for policy_name, local_name in local_camera_map.items()}
     for local_name, source in camera_specs.items():
         if local_name not in local_to_policy:
             raise ValueError(
                 f"Unknown local camera '{local_name}'. Expected one of {sorted(local_to_policy)}."
             )
         policy_name = local_to_policy[local_name]
+        if policy_name not in required_policy_camera_keys:
+            logger.info(
+                "Ignoring local camera '%s' because policy does not consume '%s'.",
+                local_name,
+                policy_name,
+            )
+            continue
         rotation = 180 if local_name in flipped_local_cameras else 0
         if use_usb_cams:
             configs[policy_name] = OpenCVCameraConfig(
@@ -155,11 +198,11 @@ def _make_camera_configs(
                 fps=fps,
                 rotation=rotation,
             )
-    missing = set(ARX5_CAMERA_KEYS) - set(configs)
+    missing = set(required_policy_camera_keys) - set(configs)
     if missing:
         raise ValueError(
-            "Missing required cameras for Pi0.5: "
-            f"{sorted(DEFAULT_LOCAL_CAMERA_MAP[name] for name in missing)}"
+            "Missing required cameras for this policy: "
+            f"{sorted(local_camera_map[name] for name in missing)}"
         )
     return configs
 
@@ -168,9 +211,17 @@ def _load_stats(stats_path: Path) -> dict[str, dict[str, list[float]]]:
     return json.loads(stats_path.read_text(encoding="utf-8"))
 
 
-def _load_policy_bundle(policy_path: str, device_override: str | None, stats_path: Path):
-    logger.info("Loading PI05 policy config from %s", policy_path)
-    policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
+def _load_policy_bundle(
+    policy_path: str,
+    device_override: str | None,
+    stats_path: Path | None,
+    policy_cfg: PreTrainedConfig | None = None,
+):
+    if policy_cfg is None:
+        logger.info("Loading PI05 policy config from %s", policy_path)
+        policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
+    else:
+        logger.info("Using preloaded PI05 policy config from %s", policy_path)
     if policy_cfg.type != "pi05":
         raise ValueError(f"Expected a pi05 policy, got '{policy_cfg.type}'.")
 
@@ -184,9 +235,13 @@ def _load_policy_bundle(policy_path: str, device_override: str | None, stats_pat
     policy.to(target_device)
     policy.eval()
 
-    logger.info("Loading normalization stats from %s", stats_path)
-    stats = _load_stats(stats_path)
-    preprocessor, postprocessor = make_pre_post_processors(policy_cfg=policy_cfg, dataset_stats=stats)
+    if stats_path is None:
+        logger.info("Loading pre/post processors from checkpoint: %s", policy_path)
+        preprocessor, postprocessor = make_pre_post_processors(policy_cfg=policy_cfg, pretrained_path=policy_path)
+    else:
+        logger.info("Loading normalization stats from %s", stats_path)
+        stats = _load_stats(stats_path)
+        preprocessor, postprocessor = make_pre_post_processors(policy_cfg=policy_cfg, dataset_stats=stats)
     logger.info("Policy bundle ready.")
     return policy_cfg, policy, preprocessor, postprocessor, target_device
 
@@ -239,25 +294,24 @@ def _predict_action_chunk(
 def _clip_safe_actions(
     actions: list[dict[str, float]],
     current_pose: list[float],
-    max_translation_m: float,
+    max_joint_step: float,
 ) -> list[dict[str, float]]:
-    previous_xyz = np.asarray(current_pose[:3], dtype=np.float64)
+    previous_joint = np.asarray(current_pose[:6], dtype=np.float64)
     safe_actions = []
     for action in actions:
         safe_action = dict(action)
-        target_xyz = np.asarray([safe_action[key] for key in ARX5_REAL_STATE_KEYS[:3]], dtype=np.float64)
-        delta = target_xyz - previous_xyz
-        distance = float(np.linalg.norm(delta))
-        if distance > max_translation_m and distance > 0:
-            target_xyz = previous_xyz + delta * (max_translation_m / distance)
-            for axis, key in enumerate(ARX5_REAL_STATE_KEYS[:3]):
-                safe_action[key] = float(target_xyz[axis])
+        target_joint = np.asarray([safe_action[key] for key in ARX5_REAL_STATE_KEYS[:6]], dtype=np.float64)
+        delta = target_joint - previous_joint
+        clipped_delta = np.clip(delta, -max_joint_step, max_joint_step)
+        if not np.allclose(delta, clipped_delta):
+            target_joint = previous_joint + clipped_delta
+            for axis, key in enumerate(ARX5_REAL_STATE_KEYS[:6]):
+                safe_action[key] = float(target_joint[axis])
             logger.warning(
-                "SAFE MODE: capped translation from %.4fm to %.4fm.",
-                distance,
-                max_translation_m,
+                "SAFE MODE: capped joint step, max per-joint delta=%.4f.",
+                max_joint_step,
             )
-        previous_xyz = target_xyz
+        previous_joint = target_joint
         safe_actions.append(safe_action)
     return safe_actions
 
@@ -267,7 +321,9 @@ def _save_chunk_io(
     record_dir: Path,
     round_index: int,
     observation: dict[str, Any],
+    current_joint_state: list[float],
     actions: list[dict[str, float]],
+    camera_names: list[str],
 ) -> Path:
     round_dir = record_dir / f"round_{round_index:04d}"
     input_dir = round_dir / "input"
@@ -275,13 +331,12 @@ def _save_chunk_io(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for camera_name in ARX5_CAMERA_KEYS:
+    for camera_name in camera_names:
         image = observation[camera_name]
         Image.fromarray(image).save(input_dir / f"{camera_name}.png")
 
-    current_state = [observation[key] for key in ARX5_REAL_STATE_KEYS]
-    (input_dir / "current_ee_state.json").write_text(
-        json.dumps({"current_ee_state": current_state}, indent=2) + "\n",
+    (input_dir / "current_joint_state.json").write_text(
+        json.dumps({"current_joint_state": current_joint_state}, indent=2) + "\n",
         encoding="utf-8",
     )
     (output_dir / "actions.json").write_text(json.dumps(actions, indent=2) + "\n", encoding="utf-8")
@@ -289,10 +344,12 @@ def _save_chunk_io(
 
 
 def _log_keyboard_help(safe_mode: bool) -> None:
+    logger.info("DEBUG: entering _log_keyboard_help(safe_mode=%s)", safe_mode)
     base_message = "Keyboard: [Space] stop | [H] home | [B] teach | [N] record pose | [M] goto pose | [R] resume | [Q] quit"
     if safe_mode:
         base_message += " | [I] next chunk"
     logger.info(base_message)
+    logger.info("DEBUG: leaving _log_keyboard_help")
 
 
 def _run_keyboard_command(
@@ -356,7 +413,6 @@ def _execute_chunk(
     state = LoopState.RUNNING
     request_next_chunk = not safe_mode
     running = True
-
     for action in actions:
         step_start = time.perf_counter()
         if keyboard is not None:
@@ -376,6 +432,11 @@ def _execute_chunk(
     return state, request_next_chunk, running
 
 
+def _log_predicted_actions(actions: list[dict[str, float]]) -> None:
+    for action_index, action in enumerate(actions):
+        logger.info("Action[%d]: %s", action_index, action)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run LeRobot pi05_base directly on an ARX5 arm.",
@@ -384,7 +445,15 @@ def main() -> None:
     parser.add_argument("--task", type=str, default=None, help="Natural language task instruction.")
     parser.add_argument("--policy-path", type=str, default=DEFAULT_POLICY_PATH)
     parser.add_argument("--policy-device", type=str, default=None)
-    parser.add_argument("--stats-path", type=Path, default=Path(str(DEFAULT_STATS_PATH)))
+    parser.add_argument(
+        "--stats-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional normalization stats path. If omitted, load policy_preprocessor/postprocessor "
+            "directly from --policy-path."
+        ),
+    )
     parser.add_argument("--execution-horizon", type=int, default=None)
     parser.add_argument("--duration", type=float, default=0.1, help="Seconds per action step.")
 
@@ -406,7 +475,7 @@ def main() -> None:
     parser.add_argument("--list-cameras", action="store_true")
 
     parser.add_argument("--safe-mode", action="store_true", default=False)
-    parser.add_argument("--max-translation-m", type=float, default=0.05)
+    parser.add_argument("--max-joint-step", type=float, default=0.02)
     parser.add_argument("--no-keyboard", action="store_true")
     parser.add_argument("--record-dir", type=Path, default=None)
     parser.add_argument("--robot-id", type=str, default="arx5")
@@ -425,9 +494,15 @@ def main() -> None:
     if args.execution_horizon is not None and args.execution_horizon <= 0:
         parser.error("--execution-horizon must be positive.")
 
+    logger.info("Loading policy config from %s", args.policy_path)
+    policy_cfg = PreTrainedConfig.from_pretrained(args.policy_path)
+    required_policy_camera_keys = _get_required_policy_camera_keys(policy_cfg)
+    local_camera_map = _resolve_local_camera_map(policy_cfg)
     camera_specs = _parse_camera_specs(args.cameras)
     camera_configs = _make_camera_configs(
         camera_specs=camera_specs,
+        local_camera_map=local_camera_map,
+        required_policy_camera_keys=required_policy_camera_keys,
         use_usb_cams=args.use_usb_cams,
         width=args.cam_width,
         height=args.cam_height,
@@ -445,14 +520,17 @@ def main() -> None:
             protect_on_disconnect=args.protect_on_disconnect,
         )
     )
+    print("222222222222222")
     policy_cfg, policy, preprocessor, postprocessor, device = _load_policy_bundle(
         policy_path=args.policy_path,
         device_override=args.policy_device,
         stats_path=args.stats_path,
+        policy_cfg=policy_cfg,
     )
     dataset_features = _build_dataset_features(robot)
+    camera_names = list(robot.cameras)
     execution_horizon = args.execution_horizon or int(policy_cfg.n_action_steps)
-
+    print("333333333333333")
     keyboard = None if args.no_keyboard else KeyboardListener()
     state = LoopState.RUNNING if keyboard is None else LoopState.STOPPED
     request_next_chunk = keyboard is None or not args.safe_mode
@@ -462,6 +540,7 @@ def main() -> None:
     try:
         logger.info("Connecting ARX5 runtime.")
         logger.info("Camera sources: %s", {name: str(source) for name, source in camera_specs.items()})
+        logger.info("Resolved local camera map: %s", local_camera_map)
         logger.info("Stub arm: %s", args.use_stub)
         robot.connect()
         logger.info("ARX5 runtime connected. Keyboard enabled: %s", keyboard is not None)
@@ -519,7 +598,7 @@ def main() -> None:
                 use_amp=policy_cfg.use_amp,
             )
             if args.safe_mode:
-                actions = _clip_safe_actions(actions, current_pose=current_pose, max_translation_m=args.max_translation_m)
+                actions = _clip_safe_actions(actions, current_pose=current_pose, max_joint_step=args.max_joint_step)
             if not actions:
                 logger.warning("Policy returned no actions. Retrying.")
                 time.sleep(0.1)
@@ -527,6 +606,7 @@ def main() -> None:
 
             grippers = [round(action[ARX5_REAL_STATE_KEYS[-1]], 4) for action in actions]
             logger.info("Predicted %d actions. Gripper values: %s", len(actions), grippers)
+            _log_predicted_actions(actions)
             request_next_chunk = False
 
             if args.record_dir is not None:
@@ -534,7 +614,9 @@ def main() -> None:
                     record_dir=args.record_dir,
                     round_index=round_index,
                     observation=observation,
+                    current_joint_state=robot.get_joint_vector(),
                     actions=actions,
+                    camera_names=camera_names,
                 )
                 logger.info("Saved chunk %d to %s", round_index, round_dir)
                 round_index += 1

@@ -100,22 +100,29 @@ The script starts in a stopped state when keyboard control is enabled. Press `R`
 
 To inspect policy outputs without moving the robot, add `--record-dir`:
 
+
+
 ```bash
 lerobot-arx5-infer \
-  --task "place shoes on rack" \
-  --policy-path lerobot/pi05_base \
-  --cameras side:254522071216 wrist:150622073629 front:409122272986 \
+  --task "Stack all the paper cups on the table together" \
+  --policy-path checkpoints/multi_cups_test0/pretrained_model \
+  --cameras front:335122271555 wrist:409122272986 \
   --safe-mode \
-  --record-dir ./inference_records
+  --record-dir /home/user/workspace/whs/Evo-RL/inference_records
 ```
 
 Each chunk is written under `./inference_records/round_XXXX/` with:
 
-- `input/base_0_rgb.png`
-- `input/left_wrist_0_rgb.png`
-- `input/right_wrist_0_rgb.png`
+- `input/base.png`
+- `input/right_wrist.png`
 - `input/current_ee_state.json`
 - `output/actions.json`
+
+For `checkpoints/multi_cups_test0`, the ARX5 runtime resolves the local camera names as:
+
+- `front` -> `observation.images.base`
+- `wrist` -> `observation.images.right_wrist`
+- `observation.images.empty_camera_0` is left empty and padded by the PI0.5 model
 
 ## 7. Useful overrides
 
@@ -144,3 +151,4 @@ lerobot-arx5-infer \
   --policy-path lerobot/pi05_base \
   --execution-horizon 10
 ```
+

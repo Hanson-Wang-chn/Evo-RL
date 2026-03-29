@@ -32,21 +32,20 @@ from .config_arx5_follower import ARX5FollowerConfig
 logger = logging.getLogger(__name__)
 
 ARX5_REAL_STATE_KEYS = (
-    "ee.x",
-    "ee.y",
-    "ee.z",
-    "ee.roll",
-    "ee.pitch",
-    "ee.yaw",
+    "joint.1",
+    "joint.2",
+    "joint.3",
+    "joint.4",
+    "joint.5",
+    "joint.6",
     "gripper.pos",
 )
-ARX5_PADDING_KEYS = tuple(f"padding_{index:02d}" for index in range(len(ARX5_REAL_STATE_KEYS), 32))
-ARX5_STATE_KEYS = ARX5_REAL_STATE_KEYS + ARX5_PADDING_KEYS
+ARX5_STATE_KEYS = ARX5_REAL_STATE_KEYS
 ARX5_CAMERA_KEYS = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
 
 
 class ARX5Follower(Robot):
-    """ARX5 follower arm with direct end-effector control for Pi0.5-style policies."""
+    """ARX5 follower arm with direct joint-space control for Pi0.5-style policies."""
 
     config_class = ARX5FollowerConfig
     name = "arx5_follower"
@@ -56,7 +55,7 @@ class ARX5Follower(Robot):
         self.config = config
         self._is_connected = False
         self._arm_client: ARX5ArmClient | None = None
-        self._last_pose = np.zeros(7, dtype=np.float64)
+        self._last_joint = np.zeros(7, dtype=np.float64)
         self.cameras = make_cameras_from_configs(config.cameras)
         default_recorded_pose = self.calibration_dir / f"{self.id or 'default'}_recorded_pose.json"
         self.recorded_pose_path = config.recorded_pose_path or default_recorded_pose
@@ -114,7 +113,7 @@ class ARX5Follower(Robot):
             )
             if self.config.startup_sleep_s > 0:
                 time.sleep(self.config.startup_sleep_s)
-            self._last_pose = np.asarray(self._arm_client.get_state(), dtype=np.float64)
+            self._last_joint = np.asarray(self._arm_client.get_state(), dtype=np.float64)
             self._is_connected = True
         except Exception:
             self._arm_client = None
@@ -130,28 +129,29 @@ class ARX5Follower(Robot):
         return self._arm_client
 
     def _state_vector_to_dict(self, vector: list[float]) -> dict[str, float]:
-        state = {key: float(value) for key, value in zip(ARX5_REAL_STATE_KEYS, vector[:7], strict=True)}
-        state.update({key: 0.0 for key in ARX5_PADDING_KEYS})
-        return state
+        return {key: float(value) for key, value in zip(ARX5_REAL_STATE_KEYS, vector[:7], strict=True)}
 
     def get_state_vector(self) -> list[float]:
         return self._require_arm_client().get_state()
 
-    def _extract_pose_from_action(self, action: RobotAction) -> list[float]:
+    def get_joint_vector(self) -> list[float]:
+        return self._require_arm_client().get_joint_positions()
+
+    def _extract_joint_from_action(self, action: RobotAction) -> list[float]:
         values = [float(action.get(key, 0.0)) for key in ARX5_REAL_STATE_KEYS]
         values[-1] = float(np.clip(values[-1], self.config.gripper_min, self.config.gripper_max))
 
         max_translation_step_m = self.config.max_translation_step_m
         if max_translation_step_m is not None:
-            current_pose = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
-            target_pose = np.asarray(values, dtype=np.float64)
-            delta = target_pose[:3] - current_pose[:3]
+            current_joint = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
+            target_joint = np.asarray(values, dtype=np.float64)
+            delta = target_joint[:3] - current_joint[:3]
             distance = float(np.linalg.norm(delta))
             if distance > max_translation_step_m and distance > 0:
-                target_pose[:3] = current_pose[:3] + delta * (max_translation_step_m / distance)
-                values = target_pose.tolist()
+                target_joint[:3] = current_joint[:3] + delta * (max_translation_step_m / distance)
+                values = target_joint.tolist()
                 logger.warning(
-                    "Clamped ARX5 translation step from %.4fm to %.4fm.",
+                    "Clamped ARX5 first-3-joint step from %.4f to %.4f.",
                     distance,
                     max_translation_step_m,
                 )
@@ -166,18 +166,18 @@ class ARX5Follower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        pose = self._extract_pose_from_action(action)
-        sent_pose = self._require_arm_client().send_pose(pose)
-        self._last_pose = np.asarray(sent_pose, dtype=np.float64)
-        return self._state_vector_to_dict(sent_pose)
+        joint = self._extract_joint_from_action(action)
+        sent_joint = self._require_arm_client().send_joint(joint)
+        self._last_joint = np.asarray(sent_joint, dtype=np.float64)
+        return self._state_vector_to_dict(sent_joint)
 
     def hold_position(self) -> None:
         self._require_arm_client().hold_position()
-        self._last_pose = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
+        self._last_joint = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
 
     def go_home(self) -> None:
         self._require_arm_client().go_home()
-        self._last_pose = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
+        self._last_joint = np.asarray(self._require_arm_client().get_state(), dtype=np.float64)
 
     def protect_mode(self) -> None:
         self._require_arm_client().protect_mode()
@@ -189,19 +189,19 @@ class ARX5Follower(Robot):
         arm_client = self._require_arm_client()
         arm_client.save_recorded_pose()
         arm_client.hold_position()
-        self._last_pose = np.asarray(arm_client.get_state(), dtype=np.float64)
+        self._last_joint = np.asarray(arm_client.get_state(), dtype=np.float64)
         return arm_client.recorded_pose_path
 
     def has_recorded_pose(self) -> bool:
         return self._require_arm_client().has_recorded_pose()
 
     def move_to_recorded(self, *, num_steps: int = 20, step_interval_s: float = 0.1) -> RobotAction:
-        pose = self._require_arm_client().move_to_recorded(
+        joint = self._require_arm_client().move_to_recorded(
             num_steps=num_steps,
             step_interval_s=step_interval_s,
         )
-        self._last_pose = np.asarray(pose, dtype=np.float64)
-        return self._state_vector_to_dict(pose)
+        self._last_joint = np.asarray(joint, dtype=np.float64)
+        return self._state_vector_to_dict(joint)
 
     @check_if_not_connected
     def disconnect(self) -> None:

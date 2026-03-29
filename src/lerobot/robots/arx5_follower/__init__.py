@@ -16,7 +16,6 @@
 
 from .arx5_follower import (
     ARX5_CAMERA_KEYS,
-    ARX5_PADDING_KEYS,
     ARX5_REAL_STATE_KEYS,
     ARX5_STATE_KEYS,
     ARX5Follower,
@@ -25,7 +24,6 @@ from .config_arx5_follower import ARX5FollowerConfig, ARX5FollowerConfigBase
 
 __all__ = [
     "ARX5_CAMERA_KEYS",
-    "ARX5_PADDING_KEYS",
     "ARX5_REAL_STATE_KEYS",
     "ARX5_STATE_KEYS",
     "ARX5Follower",

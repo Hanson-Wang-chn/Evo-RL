@@ -178,3 +178,7 @@ outputs/
 *.xml
 *.part
 AGENTS.md
+
+checkpoints/
+inference_records/
+outputs*
