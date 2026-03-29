@@ -344,12 +344,10 @@ def _save_chunk_io(
 
 
 def _log_keyboard_help(safe_mode: bool) -> None:
-    logger.info("DEBUG: entering _log_keyboard_help(safe_mode=%s)", safe_mode)
     base_message = "Keyboard: [Space] stop | [H] home | [B] teach | [N] record pose | [M] goto pose | [R] resume | [Q] quit"
     if safe_mode:
         base_message += " | [I] next chunk"
     logger.info(base_message)
-    logger.info("DEBUG: leaving _log_keyboard_help")
 
 
 def _run_keyboard_command(
@@ -434,7 +432,7 @@ def _execute_chunk(
 
 def _log_predicted_actions(actions: list[dict[str, float]]) -> None:
     for action_index, action in enumerate(actions):
-        logger.info("Action[%d]: %s", action_index, action)
+        logger.debug("Action[%d]: %s", action_index, action)
 
 
 def main() -> None:
@@ -520,7 +518,6 @@ def main() -> None:
             protect_on_disconnect=args.protect_on_disconnect,
         )
     )
-    print("222222222222222")
     policy_cfg, policy, preprocessor, postprocessor, device = _load_policy_bundle(
         policy_path=args.policy_path,
         device_override=args.policy_device,
@@ -530,7 +527,6 @@ def main() -> None:
     dataset_features = _build_dataset_features(robot)
     camera_names = list(robot.cameras)
     execution_horizon = args.execution_horizon or int(policy_cfg.n_action_steps)
-    print("333333333333333")
     keyboard = None if args.no_keyboard else KeyboardListener()
     state = LoopState.RUNNING if keyboard is None else LoopState.STOPPED
     request_next_chunk = keyboard is None or not args.safe_mode
