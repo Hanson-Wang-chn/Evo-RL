@@ -96,11 +96,11 @@ When keyboard control is enabled (the default):
 
 The script starts in a stopped state when keyboard control is enabled. Press `R` first, then `I` for each chunk when `--safe-mode` is active.
 
-## 6. Record-only mode
+## 6. Saving each round to disk (`--record-dir`)
 
-To inspect policy outputs without moving the robot, add `--record-dir`:
+With `--record-dir`, the runtime still runs **policy inference** and writes one folder per round, but it **does not send motion commands** to the arms (same idea as `lerobot_arx5_infer`: save then skip execution). Omit `--record-dir` to run the normal loop that **executes** the predicted chunk on hardware.
 
-
+Example:
 
 ```bash
 lerobot-arx5-infer \
@@ -117,6 +117,10 @@ Each chunk is written under `./inference_records/round_XXXX/` with:
 - `input/right_wrist.png`
 - `input/current_ee_state.json`
 - `output/actions.json`
+
+For dual-arm, `--record-dir` alone avoids `send_joint`; you can add `--use-stub` if you also want the CAN stack stubbed during state reads (see §3).
+
+The dual-arm runner `python -m lerobot.scripts.lerobot_arx5_dual_infer` writes the same layout with filenames derived from the checkpoint’s `observation.images.*` keys (e.g. `dual_towel` uses `input/base.png`, `input/left_wrist.png`, `input/right_wrist.png`), plus `input/state.json` and `output/actions.json`. Pass `--cameras` with those slot names, not `base_0_rgb`-style names, unless your policy was trained with those keys.
 
 For `checkpoints/multi_cups_test0`, the ARX5 runtime resolves the local camera names as:
 

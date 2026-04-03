@@ -26,6 +26,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType
 from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.utils import prepare_observation_for_inference
@@ -43,10 +44,23 @@ DEFAULT_POLICY_PATH = "lerobot/pi05_bimanual"
 DEFAULT_LEFT_CAN_PORT = "can0"
 DEFAULT_RIGHT_CAN_PORT = "can1"
 DEFAULT_STATS_PATH = files("lerobot.robots.arx5_follower").joinpath("pi05_arx5_default_stats.json")
-OBS_IMAGE_PREFIX = "observation.images."
 DUAL_STATE_DIM = 14
 STATE_KEYS = tuple(f"state.{index}" for index in range(DUAL_STATE_DIM))
-CAMERA_KEYS = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
+
+
+def _visual_image_slot_names(policy_cfg: PreTrainedConfig) -> list[str]:
+    """Names after `observation.images.` in policy input order (must match training)."""
+    if not policy_cfg.input_features:
+        raise ValueError("Policy input_features is empty; cannot infer camera slot names.")
+    prefix = f"{OBS_STR}.images."
+    slots: list[str] = []
+    for key, feat in policy_cfg.input_features.items():
+        if not key.startswith(prefix) or feat.type is not FeatureType.VISUAL:
+            continue
+        slots.append(key.removeprefix(prefix))
+    if not slots:
+        raise ValueError("Policy has no VISUAL observation.images.* inputs.")
+    return slots
 
 
 class LoopState(Enum):
@@ -112,6 +126,7 @@ def _list_realsense_cameras() -> None:
 
 def _make_camera_configs(
     *,
+    image_slot_names: list[str],
     camera_specs: dict[str, str],
     use_usb_cams: bool,
     width: int,
@@ -119,9 +134,12 @@ def _make_camera_configs(
     fps: int,
 ) -> dict[str, Any]:
     configs: dict[str, Any] = {}
-    for name in CAMERA_KEYS:
+    for name in image_slot_names:
         if name not in camera_specs:
-            raise ValueError(f"Missing required camera spec for '{name}'.")
+            raise ValueError(
+                f"Missing camera spec for slot '{name}'. Required slots (from policy): {image_slot_names}. "
+                f"Pass e.g. --cameras {name}:<serial> for each."
+            )
         source = camera_specs[name]
         rotation = 0
         if use_usb_cams:
@@ -263,12 +281,25 @@ def _log_predicted_actions(actions: list[dict[str, float]]) -> None:
         logger.debug("Action[%d]: %s", action_index, action)
 
 
-def _log_keyboard_help() -> None:
+def _log_keyboard_help(*, safe_mode: bool) -> None:
     message = (
         "Keyboard: [Space] stop | [H] home | [B] teach | [N] record pose | "
-        "[M] goto pose | [R] resume | [Q] quit"
+        "[M] goto pose | [G] open grippers | [R] resume | [Q] quit"
     )
+    if safe_mode:
+        message += " | [I] next chunk (while running)"
     logger.info(message)
+
+
+def _set_both_grippers(left_arm: ARX5ArmClient, right_arm: ARX5ArmClient, gripper_value: float) -> None:
+    """Keep current joint angles; set catch_pos (index 6) on both arms."""
+    left_pose = list(left_arm.get_state())
+    right_pose = list(right_arm.get_state())
+    left_pose[6] = float(gripper_value)
+    right_pose[6] = float(gripper_value)
+    left_arm.send_joint(left_pose)
+    right_arm.send_joint(right_pose)
+    logger.info("Both grippers set to %.4f (6-DOF joints unchanged).", gripper_value)
 
 
 def _run_keyboard_command(
@@ -277,16 +308,22 @@ def _run_keyboard_command(
     left_arm: ARX5ArmClient,
     right_arm: ARX5ArmClient,
     state: LoopState,
-) -> tuple[LoopState, bool]:
+    safe_mode: bool,
+    request_next_chunk: bool,
+    gripper_open_value: float,
+) -> tuple[LoopState, bool, bool]:
     running = True
     if key == " ":
         left_arm.hold_position()
         right_arm.hold_position()
         logger.warning("Emergency stop: holding current poses.")
-        return LoopState.STOPPED, running
+        return LoopState.STOPPED, False, running
     if key == "q":
         logger.info("Quit requested.")
-        return state, False
+        return state, request_next_chunk, False
+    if key == "g":
+        _set_both_grippers(left_arm, right_arm, gripper_open_value)
+        return state, request_next_chunk, running
     if state == LoopState.STOPPED:
         if key == "h":
             logger.info("Moving both ARX5 arms to the home pose.")
@@ -304,7 +341,7 @@ def _run_keyboard_command(
             logger.info(
                 "Teach mode enabled. Drag both arms to the desired pose, then press [N] to save the poses."
             )
-            return LoopState.TEACHING, running
+            return LoopState.TEACHING, request_next_chunk, running
         elif key == "m":
             if left_arm.has_recorded_pose() and right_arm.has_recorded_pose():
                 left_arm.move_to_recorded()
@@ -316,8 +353,11 @@ def _run_keyboard_command(
             left_arm.hold_position()
             right_arm.hold_position()
             time.sleep(0.1)
-            logger.info("Resumed policy control.")
-            return LoopState.RUNNING, running
+            if safe_mode:
+                logger.info("SAFE MODE: policy armed. Press [I] for each action chunk.")
+            else:
+                logger.info("Resumed continuous policy control.")
+            return LoopState.RUNNING, not safe_mode, running
     elif state == LoopState.TEACHING:
         if key == "n":
             left_arm.save_recorded_pose()
@@ -325,8 +365,51 @@ def _run_keyboard_command(
             left_arm.hold_position()
             right_arm.hold_position()
             logger.info("Recorded poses saved for both arms.")
-            return LoopState.STOPPED, running
-    return state, running
+            return LoopState.STOPPED, False, running
+    elif state == LoopState.RUNNING and safe_mode and key == "i":
+        logger.info("SAFE MODE: next chunk requested.")
+        return state, True, running
+    return state, request_next_chunk, running
+
+
+def _execute_dual_chunk(
+    *,
+    left_arm: ARX5ArmClient,
+    right_arm: ARX5ArmClient,
+    actions: list[dict[str, float]],
+    step_duration_s: float,
+    keyboard: KeyboardListener | None,
+    safe_mode: bool,
+    gripper_open_value: float,
+) -> tuple[LoopState, bool, bool]:
+    state = LoopState.RUNNING
+    request_next_chunk = not safe_mode
+    running = True
+    for action in actions:
+        step_start = time.perf_counter()
+        if keyboard is not None:
+            key = keyboard.get_key()
+            state, request_next_chunk, running = _run_keyboard_command(
+                key=key,
+                left_arm=left_arm,
+                right_arm=right_arm,
+                state=state,
+                safe_mode=safe_mode,
+                request_next_chunk=request_next_chunk,
+                gripper_open_value=gripper_open_value,
+            )
+            if state != LoopState.RUNNING or not running:
+                break
+        left_joint = [float(action[f"state.{index}"]) for index in range(7)]
+        right_joint = [float(action[f"state.{7 + index}"]) for index in range(7)]
+        left_thread = threading.Thread(target=left_arm.send_joint, args=(left_joint,))
+        right_thread = threading.Thread(target=right_arm.send_joint, args=(right_joint,))
+        left_thread.start()
+        right_thread.start()
+        left_thread.join()
+        right_thread.join()
+        precise_sleep(max(step_duration_s - (time.perf_counter() - step_start), 0.0))
+    return state, request_next_chunk, running
 
 
 def main() -> None:
@@ -358,11 +441,14 @@ def main() -> None:
         "--cameras",
         nargs="+",
         default=[
-            "base_0_rgb:254522071216",
-            "left_wrist_0_rgb:150622073629",
-            "right_wrist_0_rgb:409122272986",
+            "base:254522071216",
+            "left_wrist:150622073629",
+            "right_wrist:409122272986",
         ],
-        help="Camera specs as name:serial_or_index for base_0_rgb/left_wrist_0_rgb/right_wrist_0_rgb.",
+        help=(
+            "One name:serial_or_index per policy image slot (keys match checkpoint "
+            "observation.images.*, e.g. base/left_wrist/right_wrist)."
+        ),
     )
     parser.add_argument("--use-usb-cams", action="store_true")
     parser.add_argument("--cam-width", type=int, default=640)
@@ -370,12 +456,30 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--list-cameras", action="store_true")
 
+    parser.add_argument(
+        "--safe-mode",
+        action="store_true",
+        default=False,
+        help="After [R], require [I] for each policy chunk (same idea as lerobot_arx5_infer).",
+    )
     parser.add_argument("--no-keyboard", action="store_true")
+    parser.add_argument(
+        "--gripper-open",
+        type=float,
+        default=4.0,
+        help="Catch position for both arms when pressing [G] (matches typical training scale ~3–5).",
+    )
     parser.add_argument(
         "--record-dir",
         type=Path,
         default=None,
-        help="If set, record observations and policy outputs to this directory instead of executing actions.",
+        help="If set, run policy each round and save observation + actions here; do not send joint commands (no motion).",
+    )
+    parser.add_argument(
+        "--save-run-dir",
+        type=Path,
+        default=None,
+        help="If set, also save each chunk (images, state.json, actions.json) here while executing on the arms. Mutually exclusive with --record-dir.",
     )
 
     args = parser.parse_args()
@@ -387,6 +491,10 @@ def main() -> None:
         parser.error("--task is required unless --list-cameras is used.")
     if args.execution_horizon is not None and args.execution_horizon <= 0:
         parser.error("--execution-horizon must be positive.")
+    if args.safe_mode and args.no_keyboard:
+        parser.error("--safe-mode requires keyboard control (omit --no-keyboard).")
+    if args.record_dir is not None and args.save_run_dir is not None:
+        parser.error("Use either --record-dir (no motion) or --save-run-dir (with motion), not both.")
 
     logger.info("Loading policy config from %s", args.policy_path)
     policy_cfg = PreTrainedConfig.from_pretrained(args.policy_path)
@@ -403,8 +511,16 @@ def main() -> None:
             f"but checkpoint declares {getattr(action_feature, 'shape', None)}."
         )
 
+    image_slot_names = _visual_image_slot_names(policy_cfg)
+    logger.info("Policy image slots (use these in --cameras): %s", image_slot_names)
+
     camera_specs = _parse_camera_specs(args.cameras)
+    extra_specs = sorted(set(camera_specs) - set(image_slot_names))
+    if extra_specs:
+        logger.warning("Ignoring --cameras entries not in policy: %s", extra_specs)
+
     camera_configs = _make_camera_configs(
+        image_slot_names=image_slot_names,
         camera_specs=camera_specs,
         use_usb_cams=args.use_usb_cams,
         width=args.cam_width,
@@ -438,9 +554,9 @@ def main() -> None:
     execution_horizon = args.execution_horizon or int(policy_cfg.n_action_steps)
     keyboard = None if args.no_keyboard else KeyboardListener()
     state = LoopState.RUNNING if keyboard is None else LoopState.STOPPED
+    request_next_chunk = keyboard is None or not args.safe_mode
     round_index = 0
     running = True
-    record_only = args.record_dir is not None
 
     cameras = {
         name: RealSenseCamera(config) if not args.use_usb_cams else OpenCVCameraConfig(
@@ -460,15 +576,20 @@ def main() -> None:
             logger.info("Camera '%s' connected.", name)
 
         logger.info(
-            "Dual-arm runtime ready. Left CAN=%s Right CAN=%s Stub=%s",
+            "Dual-arm runtime ready. Left CAN=%s Right CAN=%s Stub=%s RecordDir=%s SaveRunDir=%s",
             args.left_can_port,
             args.right_can_port,
             args.use_stub,
+            args.record_dir,
+            args.save_run_dir,
         )
         if keyboard is not None:
             logger.info("Keyboard control enabled.")
-            _log_keyboard_help()
-            logger.info("Press [R] to resume policy control.")
+            _log_keyboard_help(safe_mode=args.safe_mode)
+            if args.safe_mode:
+                logger.info("SAFE MODE: stopped by default. Press [R] to arm policy, then [I] for each chunk.")
+            else:
+                logger.info("Stopped by default: press [R] for continuous policy control.")
 
         policy.reset()
         preprocessor.reset()
@@ -478,11 +599,14 @@ def main() -> None:
             if keyboard is not None:
                 key = keyboard.get_key()
                 previous_state = state
-                state, running = _run_keyboard_command(
+                state, request_next_chunk, running = _run_keyboard_command(
                     key=key,
                     left_arm=left_arm,
                     right_arm=right_arm,
                     state=state,
+                    safe_mode=args.safe_mode,
+                    request_next_chunk=request_next_chunk,
+                    gripper_open_value=args.gripper_open,
                 )
                 if not running:
                     break
@@ -493,6 +617,9 @@ def main() -> None:
             if not running:
                 break
             if state != LoopState.RUNNING:
+                time.sleep(0.05)
+                continue
+            if args.safe_mode and not request_next_chunk:
                 time.sleep(0.05)
                 continue
 
@@ -508,19 +635,6 @@ def main() -> None:
 
             for name, camera in cameras.items():
                 observation[name] = camera.async_read()
-
-            if record_only:
-                round_dir = _save_chunk_io(
-                    record_dir=args.record_dir,
-                    round_index=round_index,
-                    observation=observation,
-                    state=combined_state,
-                    actions=[],
-                    camera_names=camera_names,
-                )
-                logger.info("Saved record-only chunk %d to %s", round_index, round_dir)
-                round_index += 1
-                continue
 
             actions = _predict_action_chunk(
                 robot_observation=observation,
@@ -541,20 +655,19 @@ def main() -> None:
 
             logger.info("Predicted %d actions.", len(actions))
             _log_predicted_actions(actions)
+            request_next_chunk = False
 
-            # Execute the first chunk step-by-step using two threads so that
-            # left and right arm commands are sent concurrently.
-            for action in actions:
-                left_joint = [float(action[f"state.{index}"]) for index in range(7)]
-                right_joint = [float(action[f"state.{7 + index}"]) for index in range(7)]
-
-                left_thread = threading.Thread(target=left_arm.send_joint, args=(left_joint,))
-                right_thread = threading.Thread(target=right_arm.send_joint, args=(right_joint,))
-                left_thread.start()
-                right_thread.start()
-                left_thread.join()
-                right_thread.join()
-                precise_sleep(args.duration)
+            if args.save_run_dir is not None:
+                run_round_dir = _save_chunk_io(
+                    record_dir=args.save_run_dir,
+                    round_index=round_index,
+                    observation=observation,
+                    state=combined_state,
+                    actions=actions,
+                    camera_names=camera_names,
+                )
+                logger.info("Saved chunk %d to %s (--save-run-dir, executing).", round_index, run_round_dir)
+                round_index += 1
 
             if args.record_dir is not None:
                 round_dir = _save_chunk_io(
@@ -565,8 +678,27 @@ def main() -> None:
                     actions=actions,
                     camera_names=camera_names,
                 )
-                logger.info("Saved chunk %d to %s", round_index, round_dir)
+                logger.info(
+                    "Saved chunk %d to %s (--record-dir: skipped send_joint).",
+                    round_index,
+                    round_dir,
+                )
                 round_index += 1
+                if args.safe_mode:
+                    logger.info("SAFE MODE: press [I] for the next chunk.")
+                continue
+
+            state, request_next_chunk, running = _execute_dual_chunk(
+                left_arm=left_arm,
+                right_arm=right_arm,
+                actions=actions,
+                step_duration_s=args.duration,
+                keyboard=keyboard,
+                safe_mode=args.safe_mode,
+                gripper_open_value=args.gripper_open,
+            )
+            if args.safe_mode and state == LoopState.RUNNING and running:
+                logger.info("SAFE MODE: press [I] for the next chunk.")
 
     finally:
         if keyboard is not None:
